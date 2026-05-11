@@ -1,0 +1,108 @@
+# hardware-hunter — config.example.yaml
+#
+# Copy this file to config.yaml in your config_dir and adjust to taste.
+# Operational tunables only — credentials live in .env, wishlist content
+# lives in wishlist.yaml. Three files, three concerns (FR49).
+#
+# Most operators never need to edit this file; defaults are calibrated for
+# a single-user homelab deployment. Schema is enforced by pydantic-settings
+# at daemon startup; `hardware-hunter validate-config` flags drift.
+
+# ─────────────────────────────────────────────────────────────────────────
+# schedule — per-marketplace poll cadences (FR8, NFR-P1)
+# ─────────────────────────────────────────────────────────────────────────
+schedule:
+  # Wallapop poll cadence in minutes. Default 15 keeps you under the
+  # 4-hour listing half-life with margin to spare. Lower = more API load
+  # + possible anti-bot risk; higher = miss faster-moving deals.
+  wallapop_minutes: 15
+
+  # eBay.es poll cadence in minutes. eBay's official API is rate-limited
+  # by daily quota; 30 minutes is comfortable.
+  ebay_minutes: 30
+
+# ─────────────────────────────────────────────────────────────────────────
+# llm — listing evaluation (FR13–FR17, NFR-I3, NFR-C3)
+# ─────────────────────────────────────────────────────────────────────────
+llm:
+  # Provider — swappable per NFR-I3. Adapter is in adapters/llm_<provider>/.
+  # Each value requires its matching API key in .env. Default: gemini-flash
+  # (cheapest current option for the wishlist-anchored match question).
+  provider: gemini-flash   # gemini-flash | gpt-4o-mini | claude-haiku
+
+  # Per-listing evaluation cache TTL in hours (FR16). High/medium-confidence
+  # results cache for the full TTL; low-confidence cache shorter so a
+  # re-fetch doesn't get stuck with a stale "unsure" verdict.
+  cache_ttl_hours: 24
+  cache_ttl_hours_low_confidence: 1
+
+# ─────────────────────────────────────────────────────────────────────────
+# phase2 — autonomous purchase safety stack (FR23–FR35)
+# ─────────────────────────────────────────────────────────────────────────
+phase2:
+  # Global kill-switch — set true to disable Phase 2 across ALL entries
+  # without touching wishlist.yaml. Reset to false manually after fixing
+  # whatever made you flip it. Independent from the auto-disable lockout
+  # in SQLite (AR13), which is cleared only by `phase2 enable <entry>`.
+  kill_switch_global: false
+
+  # Cross-source price reconciliation tolerance (FR31). The buy aborts if
+  # the API-side and HTML-side prices differ by more than max(eur, pct%)
+  # — whichever is greater. Defaults catch the Q9 "comma vs dot" failure
+  # mode without false-tripping on routine fractional differences.
+  reconciliation_tolerance_eur: 1.00
+  reconciliation_tolerance_pct: 5
+
+  # Per-purchase circuit breaker (FR34). After N consecutive Phase 2
+  # failures (reconciliation tripped, UI check failed, marketplace error,
+  # timeout, etc.) Phase 2 auto-disables globally and requires explicit
+  # `hardware-hunter phase2 enable <entry>` to reset.
+  circuit_breaker_threshold: 3
+
+  # Daily synthetic smoke test (FR33). Runs at this hour UTC against the
+  # tracked price-parser regression fixtures. Drift auto-disables Phase 2.
+  smoke_test_hour_utc: 6
+
+# ─────────────────────────────────────────────────────────────────────────
+# telegram — delivery semantics (NFR-I6)
+# ─────────────────────────────────────────────────────────────────────────
+telegram:
+  # Exponential backoff retries on failed send (network error, 5xx).
+  retry_max_attempts: 3
+  retry_backoff_seconds: 5
+
+  # Locale for Telegram-bound strings. Only es-ES at v1 (UX-DR27 bilingual
+  # asymmetry: Spanish on Telegram, English on CLI/docs/code). English
+  # Telegram support is OQ-tracked post-launch.
+  locale: es-ES
+
+# ─────────────────────────────────────────────────────────────────────────
+# ebay — daily request budget (NFR-I5)
+# ─────────────────────────────────────────────────────────────────────────
+ebay:
+  # Daily request budget; the adapter degrades to reduced cadence on
+  # breach (raises an operational alert and slows polling to 2× the
+  # base cadence until the next UTC midnight reset).
+  daily_request_quota: 5000
+
+# ─────────────────────────────────────────────────────────────────────────
+# logging — structured JSON Lines on stdout (NFR-O1)
+# ─────────────────────────────────────────────────────────────────────────
+logging:
+  # debug | info | warn | error. Default info is the operator's normal
+  # working level; switch to debug only when diagnosing a specific
+  # failure path. The agent does NOT require debug logging to root-cause
+  # an operational alert (NFR-O4).
+  level: info
+
+# ─────────────────────────────────────────────────────────────────────────
+# paths — operator-owned state (NFR-PR1, NFR-S2, AR17)
+# ─────────────────────────────────────────────────────────────────────────
+paths:
+  # Where the SQLite stores, cookies, OAuth tokens, and Hermes memory DB
+  # live. Mounted at /app/data inside the docker-compose container.
+  data_dir: /app/data
+
+  # Where wishlist.yaml, config.yaml, and .env live. Mounted at
+  # /app/config inside the docker-compose container.
+  config_dir: /app/config
