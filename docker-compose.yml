@@ -1,0 +1,14 @@
+# hardware-hunter — single-service docker-compose deployment.
+# Operator workflow (after `hardware-hunter init` scaffolds config files):
+#   docker-compose up -d
+# See architecture.md AR17 + FR50 (stop_grace_period matches SIGTERM drain).
+
+services:
+  hardware-hunter:
+    image: ghcr.io/ifuensan/hardware-hunter:latest
+    container_name: hardware-hunter
+    restart: on-failure
+    stop_grace_period: 30s
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
