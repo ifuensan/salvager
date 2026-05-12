@@ -122,7 +122,6 @@ def test_bare_invocation_runs_daemon_stub_via_subprocess() -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["init"],
         ["test-search"],
         ["explain"],
         ["health"],

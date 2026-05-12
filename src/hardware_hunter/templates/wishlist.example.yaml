@@ -1,0 +1,101 @@
+# hardware-hunter — wishlist.example.yaml
+#
+# Copy this file to wishlist.yaml in your config_dir and edit to taste.
+# The daemon reads this file on every poll cycle (AR12 — wishlist is the
+# canonical source-of-truth for Phase 2 enable/disable, rewritten by
+# `hardware-hunter phase2 enable/disable` via ruamel.yaml round-trip so
+# your comments are preserved).
+#
+# ─────────────────────────────────────────────────────────────────────────
+# (c3) scope contract
+# ─────────────────────────────────────────────────────────────────────────
+# hardware-hunter is a personal monitoring tool. NOT an arbitrage tool.
+# `validate-wishlist` rejects entries containing any of these fields and
+# points to ROADMAP.md for the future-research repo path:
+#
+#   expected_resale_value, min_margin_percent, current_market_price,
+#   target_resale_margin, arbitrage_score, resale_target
+#
+# If you need resale scoring, fork the future-research repo named in
+# ROADMAP.md — that's structurally separated by design.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Entry schema (per FR1/FR2/FR4/FR5)
+# ─────────────────────────────────────────────────────────────────────────
+# Required:
+#   manufacturer:       str       Brand (e.g. "Western Digital", "Crucial")
+#   model:              str       Product family / line (e.g. "WD Red Plus")
+#   ref:                str       Part-number anchor (e.g. "WD40EFPX")
+#   type:               hdd|ram
+#   keywords:           list[str] Marketplace search terms (drives query gen)
+#   confidence_threshold: low|medium|high (filters LLM-evaluated matches)
+# At least one of:
+#   max_price_solo:        decimal  Ceiling for standalone-listing matches
+#   max_price_in_device:   decimal  Ceiling for container/wrapper matches.
+#                                   Set to null to disable container detection
+#                                   for this entry (FR5).
+# Optional:
+#   container_keywords: list[str]   Wrapper-listing search terms (NAS, mini-PC)
+#   phase2.enabled:     bool        Default false; toggle via CLI never YAML
+#   phase2.max_price_eur: decimal   Per-entry Phase 2 hard ceiling (FR26)
+
+entries:
+
+  # ─── Example 1: 4 TB NAS-grade HDD with container detection ────────────
+  - manufacturer: Western Digital
+    model: WD Red Plus 4TB
+    ref: WD40EFPX
+    type: hdd
+    max_price_solo: 60.00
+    max_price_in_device: 90.00
+    keywords:
+      - "WD Red Plus 4TB"
+      - "WD40EFPX"
+      - "WD 4TB NAS"
+    container_keywords:
+      - "NAS"
+      - "Synology"
+      - "QNAP"
+      - "mini PC con discos"
+    confidence_threshold: high
+    phase2:
+      enabled: false
+      max_price_eur: null
+
+  # ─── Example 2: 14 TB enterprise HDD, no container ─────────────────────
+  - manufacturer: Western Digital
+    model: Ultrastar DC HC530 14TB
+    ref: WUH721414ALE6L4
+    type: hdd
+    max_price_solo: 140.00
+    # max_price_in_device omitted → container detection disabled (FR5).
+    max_price_in_device: null
+    keywords:
+      - "Ultrastar 14TB"
+      - "WUH721414"
+      - "WD 14TB HC530"
+    container_keywords: []
+    confidence_threshold: medium
+    phase2:
+      enabled: false
+      max_price_eur: null
+
+  # ─── Example 3: DDR4 RAM, direct + container (laptop / mini-PC) ────────
+  - manufacturer: Crucial
+    model: CT16G4DFRA32A 16GB DDR4-3200
+    ref: CT16G4DFRA32A
+    type: ram
+    max_price_solo: 25.00
+    max_price_in_device: 60.00
+    keywords:
+      - "Crucial 16GB DDR4 3200"
+      - "CT16G4DFRA32A"
+      - "16 GB PC4-25600"
+    container_keywords:
+      - "PC sobremesa"
+      - "mini PC"
+      - "ordenador con 16GB"
+    confidence_threshold: high
+    phase2:
+      enabled: false
+      max_price_eur: null

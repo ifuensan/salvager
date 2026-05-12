@@ -163,10 +163,30 @@ def _placeholder() -> None:
     raise typer.Exit(code=1)
 
 
+_DEFAULT_CONFIG_DIR = Path("config")
+
+
 @app.command("init")
-def cmd_init() -> None:
-    """Scaffold config files (Epic 2 Story 2.8)."""
-    _placeholder()
+def cmd_init(
+    config_dir: Annotated[
+        Path,
+        typer.Option(
+            "--config-dir",
+            "-d",
+            help="Where to scaffold the example files (default: ./config).",
+        ),
+    ] = _DEFAULT_CONFIG_DIR,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite existing files after typing OVERWRITE."),
+    ] = False,
+) -> None:
+    """Scaffold .env, wishlist.yaml, and config.yaml from bundled examples."""
+    from hardware_hunter.cli.commands.init_cmd import run
+
+    exit_code = run(config_dir, force=force)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 _DEFAULT_WISHLIST_PATH = Path("config") / "wishlist.yaml"
