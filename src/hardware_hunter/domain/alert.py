@@ -79,6 +79,28 @@ class RenderedAlert(BaseModel):
     inline_keyboard: list[list[InlineButton]] | None = None
 
 
+CallbackVerb = Literal["view", "skip", "snooze", "buy"]
+
+
+class CallbackEvent(BaseModel):
+    """One inline-button tap received from Telegram.
+
+    The :class:`TelegramSurface` adapter parses Telegram's
+    ``CallbackQuery`` into this typed shape and hands it to the poll
+    loop's registered handler. ``callback_data`` is the raw
+    ``<surface>:<verb>:<id>`` value; ``verb`` is the parsed verb for
+    easy dispatch.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    callback_query_id: str = Field(min_length=1)
+    chat_id: int
+    message_id: int
+    callback_data: str
+    verb: CallbackVerb
+
+
 class AlertSnapshot(BaseModel):
     """The immutable record of one alert dispatched to the operator.
 
