@@ -10,7 +10,7 @@ A self-hosted personal agent for monitoring second-hand homelab parts. Watches y
 **Wishlist focus:** HDDs (NAS-grade and enterprise) and DDR4 RAM. Extensible to other part types.
 **Distribution:** single Docker image, single docker-compose service.
 
-> **Status (May 2026): early scaffolding.** Epic 1 (foundation) is in progress. The agent is not yet functional end-to-end. See [ROADMAP.md](ROADMAP.md) for the implementation timeline. Phase 1 (alerts only) ships first; Phase 2 (autonomous purchase) follows after a 4–8 week stabilization window.
+> **Status (May 2026): foundation shipped, daemon not yet polling.** Epic 1 is complete; `v0.1.0` is on GHCR with the installable skeleton, structured logging, CLI surface, and Docker image. The poll loop, marketplace adapters, and Telegram alert flow are still to come (Epics 2–4). See [ROADMAP.md](ROADMAP.md) for the implementation timeline. Phase 1 (alerts only) ships first; Phase 2 (autonomous purchase) follows after a 4–8 week stabilization window.
 
 ---
 

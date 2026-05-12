@@ -6,18 +6,20 @@ This document names what's planned, what's deferred post-launch, what's permanen
 
 ## Where we are (May 2026)
 
-Epic 1 (Foundation — Installable Skeleton & OSS Posture) is in progress:
+**Epic 1 (Foundation — Installable Skeleton & OSS Posture) is complete.** `v0.1.0` published to GHCR.
 
 - ✓ Story 1.1 — uv-managed Python package + hexagonal directory layout
 - ✓ Story 1.2 — CI quality gates with adapter discipline lint (NFR-M1)
-- ✓ Story 1.3 — Docker image + GHCR release workflow (v0.1.0-rc.1 published)
+- ✓ Story 1.3 — Docker image + GHCR release workflow
 - ✓ Story 1.4 — Tracked example configuration files
 - ✓ Story 1.5 — OSS posture documentation (this file)
-- ⏳ Story 1.6 — Structured JSON Lines logging foundation
-- ⏳ Story 1.7 — rich-based CLI rendering helpers
-- ⏳ Story 1.8 — typer CLI skeleton + `version` subcommand
+- ✓ Story 1.6 — Structured JSON Lines logging foundation (NFR-O1 / NFR-R5)
+- ✓ Story 1.7 — rich-based CLI rendering helpers + locked theme tokens (UX-DR16)
+- ✓ Story 1.8 — typer CLI skeleton + `version` subcommand (FR39 / FR48)
 
-Epic 1 completion ships `v0.1.0`. See [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md) for the full 5-epic / 61-story breakdown.
+**Epic 2 (Wishlist Authoring, Configuration & Credentials) begins next.** First story: `WishlistEntry` / `Wishlist` pydantic v2 schema as the single source of truth for FR1/FR2/FR4/FR5.
+
+See [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md) for the full 5-epic / 61-story breakdown.
 
 ---
 
