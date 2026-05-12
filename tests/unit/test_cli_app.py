@@ -1,0 +1,163 @@
+"""Tests for the typer CLI skeleton — Story 1.8 (FR39 + FR48)."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+from typer.testing import CliRunner
+
+from hardware_hunter.cli.app import app
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    """typer/click runner — stdout and stderr are returned separately."""
+    return CliRunner()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# `--help` surface — FR39 placeholder mounts
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_help_lists_all_placeholder_subcommands(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    out = result.stdout
+    for name in (
+        "init",
+        "login",
+        "validate-wishlist",
+        "validate-config",
+        "test-search",
+        "explain",
+        "phase2",
+        "audit",
+        "health",
+        "logs",
+        "wishlist",
+        "version",
+    ):
+        assert name in out, f"missing subcommand {name!r} in --help output"
+
+
+def test_short_help_flag_works(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["-h"])
+    assert result.exit_code == 0
+    assert "hardware-hunter" in result.stdout.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# `version` subcommand
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_version_human_format(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    # Human format: "hardware-hunter <semver> (<commit>)"
+    assert "hardware-hunter" in result.stdout
+    assert "0.1.0" in result.stdout
+
+
+def test_version_json_format_is_parseable(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["version", "--format", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert set(payload.keys()) == {"version", "commit"}
+    assert payload["version"] == "0.1.0"
+    assert isinstance(payload["commit"], str)
+    assert payload["commit"]  # non-empty
+
+
+def test_version_commit_from_env_var(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Dockerfile bakes the commit at build time via this env var."""
+    monkeypatch.setenv("HARDWARE_HUNTER_COMMIT", "deadbeef")
+    result = runner.invoke(app, ["version", "--format", "json"])
+    payload = json.loads(result.stdout.strip())
+    assert payload["commit"] == "deadbeef"
+
+
+def test_version_unknown_format_exits_with_usage_code(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["version", "--format", "yaml"])
+    assert result.exit_code == 2  # FR48 usage error
+    assert "error" in result.stderr.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bare invocation → daemon stub (FR39)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_bare_invocation_runs_daemon_stub_via_subprocess() -> None:
+    """The daemon stub emits structured logs to stdout and exits cleanly.
+
+    Runs via subprocess because the structured logger configures the root
+    logger and writes to ``sys.stdout`` directly — CliRunner captures
+    typer's stream but not the logger's handle.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "hardware_hunter"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "HARDWARE_HUNTER_COMMIT": "test-sha"},
+    )
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    events = [json.loads(line)["event"] for line in lines]
+    assert "daemon_started" in events
+    assert "daemon_stopped" in events
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Placeholders — exit 1 with hint pointing at ROADMAP
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["init"],
+        ["validate-wishlist"],
+        ["validate-config"],
+        ["test-search"],
+        ["explain"],
+        ["health"],
+        ["logs"],
+        ["smoke-test"],
+        ["login", "wallapop"],
+        ["login", "ebay"],
+        ["phase2", "enable", "wd_red_plus_4tb"],
+        ["phase2", "disable", "wd_red_plus_4tb"],
+        ["phase2", "status"],
+        ["audit", "show"],
+        ["wishlist", "list"],
+    ],
+)
+def test_placeholder_commands_exit_with_code_1(runner: CliRunner, argv: list[str]) -> None:
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 1, (
+        f"{argv!r} expected exit code 1 (placeholder); got {result.exit_code}"
+    )
+    assert "not yet implemented" in result.stderr
+    assert "ROADMAP" in result.stderr
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# FR48: unknown subcommand → exit 2 (usage error)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_unknown_subcommand_exits_with_usage_error(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["nonexistent-command"])
+    assert result.exit_code == 2
+
+
+def test_unknown_flag_exits_with_usage_error(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["version", "--bogus-flag"])
+    assert result.exit_code == 2
