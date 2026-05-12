@@ -192,11 +192,14 @@ def render_prose(
     prefix = _PROSE_PREFIX[style]
     body_style = THEME[style]
 
+    # markup=False so user-supplied content containing square brackets
+    # (e.g. an error message like "[phase2.x] out of range") doesn't get
+    # silently consumed by rich's markup parser.
     if _color_disabled():
-        console.print(f"{prefix}{message}", style=None)
+        console.print(f"{prefix}{message}", style=None, markup=False)
         if hint is not None:
-            console.print(f"hint: {hint}", style=None)
+            console.print(f"hint: {hint}", style=None, markup=False)
     else:
-        console.print(f"[{body_style}]{prefix}{message}[/{body_style}]")
+        console.print(f"{prefix}{message}", style=body_style, markup=False)
         if hint is not None:
-            console.print(f"[dim]hint: {hint}[/dim]")
+            console.print(f"hint: {hint}", style="dim", markup=False)

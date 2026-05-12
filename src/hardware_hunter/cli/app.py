@@ -195,10 +195,39 @@ def cmd_validate_wishlist(
         raise typer.Exit(code=exit_code)
 
 
+_DEFAULT_CONFIG_PATH = Path("config") / "config.yaml"
+_DEFAULT_ENV_PATH = Path("config") / ".env"
+
+
 @app.command("validate-config")
-def cmd_validate_config() -> None:
-    """Validate ``config.yaml`` against the schema (Epic 2)."""
-    _placeholder()
+def cmd_validate_config(
+    config_path: Annotated[
+        Path,
+        typer.Option(
+            "--config-path",
+            "-c",
+            help="Path to config.yaml (default: ./config/config.yaml).",
+        ),
+    ] = _DEFAULT_CONFIG_PATH,
+    env_path: Annotated[
+        Path,
+        typer.Option(
+            "--env-path",
+            "-e",
+            help="Path to .env (default: ./config/.env).",
+        ),
+    ] = _DEFAULT_ENV_PATH,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: 'human' (default) or 'json'."),
+    ] = "human",
+) -> None:
+    """Validate ``config.yaml`` schema + ``.env`` credential set."""
+    from hardware_hunter.cli.commands.validate_config import run
+
+    exit_code = run(config_path, env_path, output_format)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command("test-search")

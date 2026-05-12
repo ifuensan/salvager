@@ -123,7 +123,6 @@ def test_bare_invocation_runs_daemon_stub_via_subprocess() -> None:
     "argv",
     [
         ["init"],
-        ["validate-config"],
         ["test-search"],
         ["explain"],
         ["health"],
