@@ -28,6 +28,7 @@ DENY_LIST: tuple[str, ...] = (
     "telegram",  # python-telegram-bot via adapter only
     "httpx",  # AR23 + adapter discipline (external HTTP via adapters only)
     "playwright",  # browser sessions via TinyFish browser adapter only
+    "mcp",  # MCP client SDK; only the hermes_mcp adapter imports it
 )
 
 

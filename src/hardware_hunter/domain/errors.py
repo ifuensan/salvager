@@ -161,3 +161,38 @@ class TelegramConfigError(TelegramError):
     """Telegram returned a non-retryable 4xx — token invalid, chat ID
     wrong, bot kicked from chat, etc. The daemon stops attempting
     deliveries until the operator fixes the configuration."""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Hermes MCP client adapter
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class HermesError(RuntimeError):
+    """Base class for any Hermes-MCP adapter failure."""
+
+
+class HermesUnavailable(HermesError):
+    """The Hermes subprocess could not be spawned, the stdio transport
+    broke, or initialization failed.
+
+    Callers (cache, TinyFish path, subagent dispatcher) treat this as
+    a degraded-Hermes signal: the poll cycle drops to its fallback
+    (TinyFish path falls back to API; cache misses revert to direct
+    LLM calls; subagent fan-out collapses to sequential evaluation).
+    """
+
+
+class HermesToolError(HermesError):
+    """A Hermes MCP tool call returned ``isError=True``.
+
+    The MCP spec returns tool errors in-band so an orchestrating LLM
+    can recover; for our deterministic-daemon use case we raise so the
+    caller doesn't silently consume a malformed result. ``tool_name``
+    + the rendered error text are preserved on the instance for the
+    operational log line.
+    """
+
+    def __init__(self, tool_name: str, message: str) -> None:
+        self.tool_name = tool_name
+        super().__init__(f"Hermes tool {tool_name!r} returned an error: {message}")
