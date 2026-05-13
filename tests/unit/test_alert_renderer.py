@@ -7,7 +7,6 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
-from syrupy.assertion import SnapshotAssertion
 
 from hardware_hunter.domain.alert import (
     BUTTON_LABELS,
@@ -246,47 +245,9 @@ def test_llm_take_with_dot_is_escaped() -> None:
     assert "Looks good\\. Strong match\\." in rendered.text
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# Snapshot tests — FR22 locked format (mechanical drift detection)
-# ─────────────────────────────────────────────────────────────────────────
-
-
-def test_snapshot_direct_listing(snapshot: SnapshotAssertion) -> None:
-    rendered = render_phase1_listing_alert(_snapshot())
-    assert rendered.text == snapshot
-
-
-def test_snapshot_container_listing(snapshot: SnapshotAssertion) -> None:
-    rendered = render_phase1_listing_alert(
-        _snapshot(
-            evaluation=_evaluation(
-                is_container=True,
-                wrapper_text="Synology DS220+ NAS",
-                extracted_text="WD Red Plus 4TB drives",
-            )
-        )
-    )
-    assert rendered.text == snapshot
-
-
-def test_snapshot_low_confidence_listing(snapshot: SnapshotAssertion) -> None:
-    rendered = render_phase1_listing_alert(
-        _snapshot(
-            evaluation=_evaluation(
-                confidence="low",
-                one_line_take="Title hints at WD Red, ref not visible — uncertain.",
-            )
-        )
-    )
-    assert rendered.text == snapshot
-
-
-def test_snapshot_missing_photo_listing(snapshot: SnapshotAssertion) -> None:
-    rendered = render_phase1_listing_alert(_snapshot(listing=_listing(photo_urls=[])))
-    # The text body is the same — the photo absence affects photo_url only.
-    assert rendered.text == snapshot
-    assert rendered.photo_url is None
-
+# Snapshot drift detection lives in test_alert_renderer_snapshots.py
+# (Story 3.15) — it covers six fixtures including long-LLM-take and
+# special-chars-in-title that this file's behavioral tests don't reach.
 
 # ─────────────────────────────────────────────────────────────────────────
 # Price formatting (es-ES style)

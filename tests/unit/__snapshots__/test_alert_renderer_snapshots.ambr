@@ -1,5 +1,5 @@
 # serializer version: 1
-# name: test_snapshot_container_listing
+# name: test_snapshot_container
   '''
   📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
   📍 Madrid · Wallapop
@@ -9,7 +9,7 @@
   🔍 Confidence: high
   '''
 # ---
-# name: test_snapshot_direct_listing
+# name: test_snapshot_direct
   '''
   📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
   📍 Madrid · Wallapop
@@ -17,7 +17,15 @@
   🔍 Confidence: high
   '''
 # ---
-# name: test_snapshot_low_confidence_listing
+# name: test_snapshot_long_llm_take
+  '''
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  _Coincide con el modelo del wishlist \(WD Red Plus 4TB, ref WD40EFPX\) y el precio está claramente por debajo de mercado; descripción menciona uso intensivo en NAS — riesgo de SMART degradado, pero el precio compensa para un homelab\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_snapshot_low_confidence
   '''
   📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
   📍 Madrid · Wallapop
@@ -25,11 +33,19 @@
   🔍 Confidence: low
   '''
 # ---
-# name: test_snapshot_missing_photo_listing
+# name: test_snapshot_missing_photo
   '''
   📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
   📍 Madrid · Wallapop
   _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_snapshot_special_chars_in_title
+  '''
+  📦 *WD\_Red\+Plus \*4TB\* \(ref\!\)* — *55,00 €*
+  📍 L'Hospitalet de Llobregat · Wallapop
+  _100% match: title\=ref\. Price < 60€\!_
   🔍 Confidence: high
   '''
 # ---
