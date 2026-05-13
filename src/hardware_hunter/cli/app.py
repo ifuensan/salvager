@@ -17,17 +17,23 @@ typer's default for unknown subcommands is ``2``, which matches FR48.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
+import signal
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from hardware_hunter.observability.logging import get_logger
 from hardware_hunter.observability.styling import render_prose
+
+if TYPE_CHECKING:
+    from hardware_hunter.orchestration.composer import ComposedDaemon
 
 app = typer.Typer(
     name="hardware-hunter",
@@ -56,31 +62,106 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(wishlist_app, name="wishlist")
 
 
+# Default paths — defined here (before the root callback) because typer
+# evaluates the callback's default arguments at decoration time. Each
+# is overridable via the matching ``--{name}-path`` CLI flag.
+_DEFAULT_CONFIG_DIR = Path("config")
+_DEFAULT_WISHLIST_PATH = _DEFAULT_CONFIG_DIR / "wishlist.yaml"
+_DEFAULT_CONFIG_PATH = _DEFAULT_CONFIG_DIR / "config.yaml"
+_DEFAULT_ENV_PATH = _DEFAULT_CONFIG_DIR / ".env"
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Root callback — bare `hardware-hunter` runs the daemon (FR39)
 # ─────────────────────────────────────────────────────────────────────────
 
 
 @app.callback()
-def _root(ctx: typer.Context) -> None:
-    """Dispatch to the daemon stub when invoked without a subcommand."""
+def _root(
+    ctx: typer.Context,
+    config_path: Annotated[
+        Path,
+        typer.Option(
+            "--config-path",
+            "-c",
+            help="Path to config.yaml (default: ./config/config.yaml).",
+        ),
+    ] = _DEFAULT_CONFIG_PATH,
+    wishlist_path: Annotated[
+        Path,
+        typer.Option(
+            "--wishlist-path",
+            "-w",
+            help="Path to wishlist.yaml (default: ./config/wishlist.yaml).",
+        ),
+    ] = _DEFAULT_WISHLIST_PATH,
+    env_path: Annotated[
+        Path,
+        typer.Option(
+            "--env-path",
+            "-e",
+            help="Path to .env (default: ./config/.env).",
+        ),
+    ] = _DEFAULT_ENV_PATH,
+) -> None:
+    """Run the daemon when invoked without a subcommand."""
     if ctx.invoked_subcommand is not None:
         return
-    _run_daemon_stub()
+    _run_daemon(config_path=config_path, wishlist_path=wishlist_path, env_path=env_path)
 
 
-def _run_daemon_stub() -> None:
-    """Epic 1 placeholder for the daemon entrypoint.
+def _run_daemon(*, config_path: Path, wishlist_path: Path, env_path: Path) -> None:
+    """Compose every adapter and run the daemon until SIGTERM/SIGINT.
 
-    The real poll loop lands in Epic 3. At v0.1 we emit the lifecycle
-    events through the structured logger so an operator running the
-    Docker image sees the container start cleanly and exit cleanly —
-    which is enough to verify the image, the logging substrate, and the
-    console-script wiring all work end-to-end.
+    Exit-code semantics (FR48):
+      - ``4`` — missing credentials (delegated to :func:`load_env_or_exit`).
+      - ``5`` — no marketplaces have credentials on disk (no work to do).
+      - ``0`` — clean shutdown after a signal.
     """
+    from hardware_hunter.config.env import load_env_or_exit
+    from hardware_hunter.orchestration.composer import (
+        NoMarketplacesEnabledError,
+        compose_daemon,
+    )
+
     log = get_logger("daemon")
-    log.info("daemon_started", extra={"phase": "stub", "version": _resolve_version()})
-    log.info("daemon_stopped", extra={"reason": "stub_no_poll_loop"})
+    env = load_env_or_exit(env_path)
+
+    try:
+        composed = compose_daemon(
+            env,
+            config_path=config_path,
+            wishlist_path=wishlist_path,
+        )
+    except NoMarketplacesEnabledError as exc:
+        log.error("daemon_no_marketplaces_enabled", extra={"reason": str(exc)})
+        render_prose(
+            "no marketplace credentials found",
+            style="error",
+            hint="run `hardware-hunter login wallapop` or `hardware-hunter login ebay` first",
+        )
+        raise typer.Exit(code=5) from exc
+
+    log.info("daemon_starting", extra={"version": _resolve_version()})
+    asyncio.run(_serve(composed))
+
+
+async def _serve(composed: ComposedDaemon) -> None:
+    """Start the daemon, register SIGTERM/SIGINT handlers, and block."""
+    daemon = composed.daemon
+    await daemon.start()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # Windows event-loops don't support add_signal_handler; on
+        # those, Ctrl-C still works via KeyboardInterrupt.
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.shutdown()))
+
+    try:
+        await daemon.serve_until_shutdown_signal()
+    finally:
+        await daemon.shutdown()
+        await composed.aclose()
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -163,9 +244,6 @@ def _placeholder() -> None:
     raise typer.Exit(code=1)
 
 
-_DEFAULT_CONFIG_DIR = Path("config")
-
-
 @app.command("init")
 def cmd_init(
     config_dir: Annotated[
@@ -189,9 +267,6 @@ def cmd_init(
         raise typer.Exit(code=exit_code)
 
 
-_DEFAULT_WISHLIST_PATH = Path("config") / "wishlist.yaml"
-
-
 @app.command("validate-wishlist")
 def cmd_validate_wishlist(
     path: Annotated[
@@ -213,10 +288,6 @@ def cmd_validate_wishlist(
     exit_code = run(path, output_format)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
-
-
-_DEFAULT_CONFIG_PATH = Path("config") / "config.yaml"
-_DEFAULT_ENV_PATH = Path("config") / ".env"
 
 
 @app.command("validate-config")

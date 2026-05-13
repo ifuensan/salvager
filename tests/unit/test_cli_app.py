@@ -89,29 +89,45 @@ def test_version_unknown_format_exits_with_usage_code(runner: CliRunner) -> None
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Bare invocation → daemon stub (FR39)
+# Bare invocation → daemon (FR39)
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def test_bare_invocation_runs_daemon_stub_via_subprocess() -> None:
-    """The daemon stub emits structured logs to stdout and exits cleanly.
+def test_bare_invocation_without_env_exits_missing_creds() -> None:
+    """The bare daemon requires .env credentials; missing → exit 4.
 
-    Runs via subprocess because the structured logger configures the root
-    logger and writes to ``sys.stdout`` directly — CliRunner captures
-    typer's stream but not the logger's handle.
+    Runs via subprocess for the same reason as below (the structured
+    logger writes to ``sys.stdout`` directly). With no ``.env`` file
+    in the test cwd, :func:`load_env_or_exit` renders the locked
+    error template and exits with the missing-credentials code per
+    Story 2.6 / FR48.
     """
+    # Scrub real-environment credentials so the loader sees an empty .env.
+    scrubbed_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k
+        not in {
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_CHAT_ID",
+            "GEMINI_API_KEY",
+            "EBAY_APP_ID",
+            "EBAY_CERT_ID",
+            "EBAY_DEV_ID",
+            "TINYFISH_API_KEY",
+        }
+    }
+    scrubbed_env["HARDWARE_HUNTER_COMMIT"] = "test-sha"
+
     result = subprocess.run(
         [sys.executable, "-m", "hardware_hunter"],
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "HARDWARE_HUNTER_COMMIT": "test-sha"},
+        env=scrubbed_env,
     )
-    assert result.returncode == 0, result.stderr
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    events = [json.loads(line)["event"] for line in lines]
-    assert "daemon_started" in events
-    assert "daemon_stopped" in events
+    assert result.returncode == 4, result.stderr
+    assert "error" in result.stderr.lower()
 
 
 # ─────────────────────────────────────────────────────────────────────────

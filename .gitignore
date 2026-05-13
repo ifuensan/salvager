@@ -38,6 +38,7 @@ htmlcov/
 /.env
 /wishlist.yaml
 /config.yaml
+/config/
 /data/
 
 # Duplicate BMAD tooling — .claude/ is the canonical Claude Code skills location

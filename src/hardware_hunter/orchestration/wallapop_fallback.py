@@ -162,9 +162,52 @@ async def wallapop_two_path_fetch(
     return results
 
 
+class WallapopFallbackFetcher(PageFetcher):
+    """:class:`PageFetcher` adaptor over :func:`wallapop_two_path_fetch`.
+
+    The poll loop (Story 3.14) takes a single ``PageFetcher`` per
+    marketplace. For Wallapop we need the API → TinyFish fallback
+    behaviour to be invisible from the loop's perspective, so we wrap
+    the two-path helper in a ``PageFetcher`` and pass that single
+    object down. State (``WallapopHealth``) is owned by this instance
+    so it survives across cycles.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_fetcher: PageFetcher,
+        tinyfish_fetcher: PageFetcher,
+        health: WallapopHealth | None = None,
+    ) -> None:
+        self._api_fetcher = api_fetcher
+        self._tinyfish_fetcher = tinyfish_fetcher
+        self._health = health if health is not None else WallapopHealth()
+
+    @property
+    def health(self) -> WallapopHealth:
+        return self._health
+
+    async def search(self, query: SearchQuery) -> list[Listing]:
+        return await wallapop_two_path_fetch(
+            query,
+            api_fetcher=self._api_fetcher,
+            tinyfish_fetcher=self._tinyfish_fetcher,
+            health=self._health,
+        )
+
+    async def fetch(self, listing_url: str) -> Listing:
+        # `explain <url>` (Epic 4) is the only consumer; v0.x defers it.
+        raise NotImplementedError(
+            "WallapopFallbackFetcher.fetch is not implemented at v0.x — "
+            "per-listing fetch lands with the `explain` command in Epic 4."
+        )
+
+
 __all__ = [
     "SOURCE_API",
     "SOURCE_TINYFISH",
+    "WallapopFallbackFetcher",
     "WallapopHealth",
     "wallapop_two_path_fetch",
 ]
