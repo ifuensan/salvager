@@ -671,5 +671,3 @@ def test_poll_loop_does_not_import_adapters() -> None:
             if module.startswith("hardware_hunter.adapters"):
                 offenders.append(f"from {module} import ...")
     assert not offenders, "poll_loop imported an adapter:\n  " + "\n  ".join(offenders)
-
-
