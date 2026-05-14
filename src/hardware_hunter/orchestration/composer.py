@@ -66,8 +66,10 @@ from hardware_hunter.orchestration.daemon import Daemon
 from hardware_hunter.orchestration.poll_loop import run_poll_cycle
 from hardware_hunter.orchestration.wallapop_fallback import WallapopFallbackFetcher
 
-#: Path under ``data_dir`` where Story 2.9 writes the Wallapop cookie jar.
-WALLAPOP_COOKIES_RELPATH: Final[Path] = Path("auth") / "wallapop_cookies.json"
+#: Path under ``data_dir`` where Story 2.9 writes the Wallapop cookie jar
+#: in Netscape ``cookies.txt`` format. The unofficial-API adapter reads
+#: this file via :func:`hardware_hunter.adapters.wallapop_api.cookies.load_cookies`.
+WALLAPOP_COOKIES_RELPATH: Final[Path] = Path("auth") / "wallapop_cookies.txt"
 
 #: Path under ``data_dir`` where Story 2.10 writes the eBay OAuth tokens.
 EBAY_OAUTH_TOKENS_RELPATH: Final[Path] = Path("auth") / "oauth_tokens.json"

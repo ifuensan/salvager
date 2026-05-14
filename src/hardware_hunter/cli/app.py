@@ -351,10 +351,34 @@ def cmd_smoke_test() -> None:
     _placeholder()
 
 
+_DEFAULT_DATA_DIR = Path("/app/data")
+
+
 @login_app.command("wallapop")
-def cmd_login_wallapop() -> None:
-    """Interactive Wallapop browser cookie capture (Epic 2 Story 2.9)."""
-    _placeholder()
+def cmd_login_wallapop(
+    data_dir: Annotated[
+        Path,
+        typer.Option(
+            "--data-dir",
+            "-d",
+            help="Where to write the captured cookie file (default: /app/data).",
+        ),
+    ] = _DEFAULT_DATA_DIR,
+    timeout: Annotated[
+        int,
+        typer.Option(
+            "--timeout",
+            help="Max seconds to wait for the operator to complete login.",
+            min=10,
+        ),
+    ] = 300,
+) -> None:
+    """Interactive Wallapop browser cookie capture (Story 2.9)."""
+    from hardware_hunter.cli.commands.login_wallapop import run
+
+    exit_code = run(data_dir, timeout_s=timeout)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @login_app.command("ebay")

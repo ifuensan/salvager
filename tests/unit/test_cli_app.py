@@ -143,7 +143,6 @@ def test_bare_invocation_without_env_exits_missing_creds() -> None:
         ["health"],
         ["logs"],
         ["smoke-test"],
-        ["login", "wallapop"],
         ["login", "ebay"],
         ["phase2", "enable", "wd_red_plus_4tb"],
         ["phase2", "disable", "wd_red_plus_4tb"],
@@ -159,6 +158,17 @@ def test_placeholder_commands_exit_with_code_1(runner: CliRunner, argv: list[str
     )
     assert "not yet implemented" in result.stderr
     assert "ROADMAP" in result.stderr
+
+
+def test_login_wallapop_in_non_tty_exits_1(runner: CliRunner) -> None:
+    """The login command is wired and refuses a non-interactive context.
+
+    CliRunner provides a non-TTY stdin, so this also confirms the
+    Story 2.9 non-TTY guard fires through the typer boundary.
+    """
+    result = runner.invoke(app, ["login", "wallapop", "--data-dir", "/tmp"])
+    assert result.exit_code == 1
+    assert "interactive terminal" in result.stderr
 
 
 # ─────────────────────────────────────────────────────────────────────────
