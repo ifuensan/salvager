@@ -164,11 +164,20 @@ async def _serve(composed: ComposedDaemon) -> None:
 
     await daemon.start()
     loop = asyncio.get_running_loop()
+    # Keep strong refs to the shutdown tasks so they aren't GC'd mid-drain.
+    shutdown_tasks: set[asyncio.Task[None]] = set()
+
+    def _on_signal(reason: str) -> None:
+        task = asyncio.create_task(daemon.shutdown(reason=reason))
+        shutdown_tasks.add(task)
+        task.add_done_callback(shutdown_tasks.discard)
+
     for sig in (signal.SIGTERM, signal.SIGINT):
         # Windows event-loops don't support add_signal_handler; on
         # those, Ctrl-C still works via KeyboardInterrupt.
+        reason = "sigterm" if sig == signal.SIGTERM else "sigint"
         with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.shutdown()))
+            loop.add_signal_handler(sig, _on_signal, reason)
 
     try:
         await daemon.serve_until_shutdown_signal()

@@ -144,6 +144,24 @@ async def test_shutdown_is_idempotent() -> None:
     assert scheduler.shutdown_calls == 1
 
 
+async def test_shutdown_threads_reason_and_drain_seconds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Story 4.8: daemon_stopped carries ctx={reason, drain_seconds}."""
+    scheduler = _FakeScheduler()
+    daemon = Daemon(scheduler=scheduler, wallapop_job=_noop)
+    await daemon.start()
+    capsys.readouterr()
+    await daemon.shutdown(reason="sigterm")
+    out = capsys.readouterr().out
+
+    stopped = [r for r in _records(out) if r["event"] == "daemon_stopped"]
+    assert stopped
+    assert stopped[0]["reason"] == "sigterm"
+    assert isinstance(stopped[0]["drain_seconds"], int | float)
+    assert stopped[0]["drain_seconds"] >= 0
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # serve_until_shutdown_signal — blocks until shutdown flips the event
 # ─────────────────────────────────────────────────────────────────────────

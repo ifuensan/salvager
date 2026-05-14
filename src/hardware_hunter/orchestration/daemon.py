@@ -14,12 +14,14 @@ Lifecycle
 - :meth:`serve_until_shutdown_signal` blocks until :meth:`shutdown`
   is called from elsewhere (signal handler).
 - :meth:`shutdown` drains in-flight scheduler jobs (FR50 budget) and
-  emits ``daemon_stopped``. Idempotent.
+  emits ``daemon_stopped`` with ``ctx={"reason", "drain_seconds"}``.
+  Idempotent.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Final
 
@@ -104,8 +106,12 @@ class Daemon:
         """
         await self._shutdown_event.wait()
 
-    async def shutdown(self) -> None:
+    async def shutdown(self, *, reason: str = "unknown") -> None:
         """Drain in-flight scheduler jobs and emit ``daemon_stopped``.
+
+        ``reason`` is threaded from the signal handler (``"sigterm"`` /
+        ``"sigint"``) and surfaced — alongside the measured drain
+        duration — in the ``daemon_stopped`` event ctx (Story 4.8 / FR50).
 
         Idempotent: a second call is a no-op so a signal-handler race
         can't double-shutdown.
@@ -113,8 +119,13 @@ class Daemon:
         if self._shutdown_event.is_set():
             return
         self._shutdown_event.set()
+        started = time.monotonic()
         await self._scheduler.shutdown()
-        self._log.info("daemon_stopped", extra={})
+        drain_seconds = round(time.monotonic() - started, 2)
+        self._log.info(
+            "daemon_stopped",
+            extra={"reason": reason, "drain_seconds": drain_seconds},
+        )
 
 
 __all__ = [
