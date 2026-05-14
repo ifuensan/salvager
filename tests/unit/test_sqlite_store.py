@@ -136,8 +136,8 @@ def test_migration_runner_applies_pending_migrations(tmp_path: Path) -> None:
     connection = open_connection(tmp_path / "hardware_hunter.db")
     try:
         version = MigrationRunner().run(connection)
-        assert version == 1
-        assert MigrationRunner().current_version(connection) == 1
+        assert version == 2
+        assert MigrationRunner().current_version(connection) == 2
     finally:
         connection.close()
 
@@ -210,7 +210,7 @@ def test_migration_runner_persists_schema_version(migrated_db: Path) -> None:
     connection = open_connection(migrated_db)
     try:
         row = connection.execute("SELECT value FROM _meta WHERE key='schema_version'").fetchone()
-        assert int(row[0]) == 1
+        assert int(row[0]) == 2
     finally:
         connection.close()
 
