@@ -237,6 +237,38 @@ class SqliteStore(Store):
             await asyncio.to_thread(_write)
 
     # ─────────────────────────────────────────────────────────────────
+    # _meta key-value store
+    # ─────────────────────────────────────────────────────────────────
+
+    async def set_meta(self, key: str, value: str) -> None:
+        def _write() -> None:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def get_meta(self, key: str) -> str | None:
+        def _read() -> str | None:
+            cursor = self._connection.execute(
+                "SELECT value FROM _meta WHERE key = ?",
+                (key,),
+            )
+            row = cursor.fetchone()
+            return None if row is None else str(row["value"])
+
+        return await asyncio.to_thread(_read)
+
+    async def get_all_meta(self) -> dict[str, str]:
+        def _read() -> dict[str, str]:
+            cursor = self._connection.execute("SELECT key, value FROM _meta")
+            return {str(row["key"]): str(row["value"]) for row in cursor.fetchall()}
+
+        return await asyncio.to_thread(_read)
+
+    # ─────────────────────────────────────────────────────────────────
     # Phase 2 stubs — guardrail-tripped per AR24
     # ─────────────────────────────────────────────────────────────────
 

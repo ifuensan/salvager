@@ -69,6 +69,8 @@ _DEFAULT_CONFIG_DIR = Path("config")
 _DEFAULT_WISHLIST_PATH = _DEFAULT_CONFIG_DIR / "wishlist.yaml"
 _DEFAULT_CONFIG_PATH = _DEFAULT_CONFIG_DIR / "config.yaml"
 _DEFAULT_ENV_PATH = _DEFAULT_CONFIG_DIR / ".env"
+_DEFAULT_DATA_DIR = Path("/app/data")
+_EBAY_DEFAULT_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -148,7 +150,18 @@ def _run_daemon(*, config_path: Path, wishlist_path: Path, env_path: Path) -> No
 
 async def _serve(composed: ComposedDaemon) -> None:
     """Start the daemon, register SIGTERM/SIGINT handlers, and block."""
+    from datetime import UTC, datetime
+
     daemon = composed.daemon
+
+    # Persist daemon identity to `_meta` so `hardware-hunter health`
+    # (Story 4.4) can report version / PID / uptime — and so a later
+    # `health` run can tell a *running* daemon from a stale heartbeat.
+    started_at = datetime.now(UTC).isoformat()
+    await composed.store.set_meta("daemon_pid", str(os.getpid()))
+    await composed.store.set_meta("daemon_started_at", started_at)
+    await composed.store.set_meta("daemon_version", _resolve_version())
+
     await daemon.start()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -334,9 +347,34 @@ def cmd_explain() -> None:
 
 
 @app.command("health")
-def cmd_health() -> None:
-    """Print adapter, scheduler, and Phase 2 health snapshot (Epic 4)."""
-    _placeholder()
+def cmd_health(
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
+    ] = _DEFAULT_DATA_DIR,
+    config_path: Annotated[
+        Path,
+        typer.Option(
+            "--config-path",
+            "-c",
+            help="Path to config.yaml (default: ./config/config.yaml).",
+        ),
+    ] = _DEFAULT_CONFIG_PATH,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: 'human' (default) or 'json'."),
+    ] = "human",
+) -> None:
+    """Print adapter status, daemon liveness, and Phase 1 activity (Story 4.4)."""
+    from hardware_hunter.cli.commands.health_cmd import run
+
+    exit_code = run(
+        data_dir=data_dir,
+        config_path=config_path,
+        output_format=output_format,
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command("logs")
@@ -349,13 +387,6 @@ def cmd_logs() -> None:
 def cmd_smoke_test() -> None:
     """Manually run the Phase 2 synthetic smoke test (Epic 5)."""
     _placeholder()
-
-
-_DEFAULT_DATA_DIR = Path("/app/data")
-
-# eBay Browse-API OAuth scope — kept as a plain string here so typer can
-# use it as a default without importing the adapter at module-load time.
-_EBAY_DEFAULT_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
 
 @login_app.command("wallapop")

@@ -240,7 +240,7 @@ def _build_wallapop_job(
 
     api_fetcher: PageFetcher = WallapopApiFetcher(cookies_path=cookies_path)
     tinyfish_fetcher: PageFetcher = WallapopTinyfishFetcher(api_key=env.TINYFISH_API_KEY)
-    fallback: PageFetcher = WallapopFallbackFetcher(
+    fallback = WallapopFallbackFetcher(
         api_fetcher=api_fetcher,
         tinyfish_fetcher=tinyfish_fetcher,
         reporter=reporter,
@@ -255,6 +255,13 @@ def _build_wallapop_job(
             evaluator=evaluator,
             store=store,
             telegram=telegram,
+        )
+        # Persist the API-path health to `_meta` so `health` can report
+        # "wallapop_api degraded / wallapop_tinyfish healthy" without
+        # the daemon's in-memory state (Story 4.4 / AR14).
+        await store.set_meta(
+            "wallapop_api_status",
+            "healthy" if fallback.health.api_attempt_enabled() else "degraded",
         )
 
     return _wallapop_cycle

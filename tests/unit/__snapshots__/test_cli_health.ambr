@@ -1,0 +1,65 @@
+# serializer version: 1
+# name: test_health_human_output_snapshot[100]
+  '''
+  Daemon: running (PID 99999)
+  Version: 0.1.0
+  Uptime: 3 hours ago
+  Adapter                              │ Status            │ Last Activity                            
+  ─────────────────────────────────────┼───────────────────┼──────────────────────────────────────────
+  wallapop_api                         │ healthy           │ 2026-05-14T17:56:00Z                     
+  wallapop_tinyfish                    │ healthy           │ 2026-05-14T17:56:00Z                     
+  ebay_api                             │ healthy           │ 2026-05-14T17:48:00Z                     
+  Recent matches: 2 in last 24h (watching)
+  Last poll: 2026-05-14T17:56:00Z (wallapop, 4 minutes ago)
+  Phase 2: 0 entries enabled (globally disabled? no; circuit breaker closed 0/3)
+  
+  '''
+# ---
+# name: test_health_human_output_snapshot[120]
+  '''
+  Daemon: running (PID 99999)
+  Version: 0.1.0
+  Uptime: 3 hours ago
+  Adapter                                      │ Status               │ Last Activity                                     
+  ─────────────────────────────────────────────┼──────────────────────┼───────────────────────────────────────────────────
+  wallapop_api                                 │ healthy              │ 2026-05-14T17:56:00Z                              
+  wallapop_tinyfish                            │ healthy              │ 2026-05-14T17:56:00Z                              
+  ebay_api                                     │ healthy              │ 2026-05-14T17:48:00Z                              
+  Recent matches: 2 in last 24h (watching)
+  Last poll: 2026-05-14T17:56:00Z (wallapop, 4 minutes ago)
+  Phase 2: 0 entries enabled (globally disabled? no; circuit breaker closed 0/3)
+  
+  '''
+# ---
+# name: test_health_human_output_snapshot[60]
+  '''
+  Daemon: running (PID 99999)
+  Version: 0.1.0
+  Uptime: 3 hours ago
+  Adapter               │ Status    │ Last Activity           
+  ──────────────────────┼───────────┼─────────────────────────
+  wallapop_api          │ healthy   │ 2026-05-14T17:56:00Z    
+  wallapop_tinyfish     │ healthy   │ 2026-05-14T17:56:00Z    
+  ebay_api              │ healthy   │ 2026-05-14T17:48:00Z    
+  Recent matches: 2 in last 24h (watching)
+  Last poll: 2026-05-14T17:56:00Z (wallapop, 4 minutes ago)
+  Phase 2: 0 entries enabled (globally disabled? no; circuit breaker closed 0/3)
+  
+  '''
+# ---
+# name: test_health_human_output_snapshot[80]
+  '''
+  Daemon: running (PID 99999)
+  Version: 0.1.0
+  Uptime: 3 hours ago
+  Adapter                       │ Status        │ Last Activity                   
+  ──────────────────────────────┼───────────────┼─────────────────────────────────
+  wallapop_api                  │ healthy       │ 2026-05-14T17:56:00Z            
+  wallapop_tinyfish             │ healthy       │ 2026-05-14T17:56:00Z            
+  ebay_api                      │ healthy       │ 2026-05-14T17:48:00Z            
+  Recent matches: 2 in last 24h (watching)
+  Last poll: 2026-05-14T17:56:00Z (wallapop, 4 minutes ago)
+  Phase 2: 0 entries enabled (globally disabled? no; circuit breaker closed 0/3)
+  
+  '''
+# ---

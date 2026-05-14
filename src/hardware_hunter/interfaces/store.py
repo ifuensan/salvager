@@ -102,6 +102,28 @@ class Store(ABC):
         """Append a callback-tap row to the audit log (NFR-S4)."""
 
     # ─────────────────────────────────────────────────────────────────
+    # Phase 1: _meta key-value store
+    # ─────────────────────────────────────────────────────────────────
+    #
+    # The ``_meta`` table is the daemon's persistent scratch space:
+    # poll heartbeats, daemon PID/version, adapter-status flags. It is
+    # NOT audit data — keys are freely overwritten. The ``health`` CLI
+    # command (Story 4.4) reads ``_meta`` directly so it can report
+    # daemon state without the daemon process running (AR14).
+
+    @abstractmethod
+    async def set_meta(self, key: str, value: str) -> None:
+        """Upsert a ``_meta`` key. Overwrites any prior value."""
+
+    @abstractmethod
+    async def get_meta(self, key: str) -> str | None:
+        """Return the ``_meta`` value for ``key``, or None if unset."""
+
+    @abstractmethod
+    async def get_all_meta(self) -> dict[str, str]:
+        """Return every ``_meta`` key-value pair as a plain dict."""
+
+    # ─────────────────────────────────────────────────────────────────
     # Phase 2 — declared, but concrete v0.x implementations must raise
     # Phase2GuardrailTripped per AR24. No code path produces these
     # objects until Phase 2 is enabled (the domain constructors

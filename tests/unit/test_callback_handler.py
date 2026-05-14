@@ -117,6 +117,16 @@ class _FakeStore(Store):
     async def record_callback(self, callback: CallbackAudit) -> None:
         self.callbacks.append(callback)
 
+    # _meta — not exercised here.
+    async def set_meta(self, key: str, value: str) -> None:
+        return None
+
+    async def get_meta(self, key: str) -> str | None:
+        return None
+
+    async def get_all_meta(self) -> dict[str, str]:
+        return {}
+
     # Phase 2 — never invoked here.
     async def record_tap_event(self, tap: TapEventAudit) -> None:
         raise AssertionError("Phase 2 audit should not run in Story 3.13 tests")
@@ -530,6 +540,9 @@ def _run_subprocess_logging_handle_unknown_verb() -> str:
         "    async def get_alert_snapshot(self, *a, **kw): return None\n"
         "    async def get_alert_snapshot_by_alert_id(self, *a, **kw): return None\n"
         "    async def record_callback(self, *a, **kw): pass\n"
+        "    async def set_meta(self, *a, **kw): pass\n"
+        "    async def get_meta(self, *a, **kw): return None\n"
+        "    async def get_all_meta(self, *a, **kw): return {}\n"
         "    async def record_tap_event(self, *a, **kw): pass\n"
         "    async def record_transaction(self, *a, **kw): pass\n"
         "class _T(TelegramSurface):\n"
@@ -580,6 +593,9 @@ def _run_subprocess_logging_handle_snooze() -> str:
         "    async def get_alert_snapshot(self, *a, **kw): return None\n"
         "    async def get_alert_snapshot_by_alert_id(self, *a, **kw): return SNAP\n"
         "    async def record_callback(self, *a, **kw): pass\n"
+        "    async def set_meta(self, *a, **kw): pass\n"
+        "    async def get_meta(self, *a, **kw): return None\n"
+        "    async def get_all_meta(self, *a, **kw): return {}\n"
         "    async def record_tap_event(self, *a, **kw): pass\n"
         "    async def record_transaction(self, *a, **kw): pass\n"
         "class _T(TelegramSurface):\n"

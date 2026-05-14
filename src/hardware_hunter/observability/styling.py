@@ -166,6 +166,18 @@ def _cell(value: object) -> str:
     return str(value)
 
 
+def print_table(table: Table, *, width: int = _DEFAULT_TABLE_WIDTH) -> None:
+    """Print a :func:`render_table` result to stdout.
+
+    ``render_table`` only *builds* the table — this is the companion
+    that writes it, so no CLI command touches ``sys.stdout`` directly.
+    ``width`` should match the width passed to ``render_table`` so the
+    console doesn't re-wrap the already-laid-out table.
+    """
+    console = _build_console(sys.stdout, width=width)
+    console.print(table)
+
+
 _PROSE_WIDTH = 4096
 
 

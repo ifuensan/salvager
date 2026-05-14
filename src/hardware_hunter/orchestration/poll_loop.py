@@ -198,6 +198,19 @@ async def run_poll_cycle(
                     )
 
     summary.latency_ms = int((time.perf_counter() - started) * 1000)
+
+    # Persist a poll heartbeat to `_meta` so `hardware-hunter health`
+    # (Story 4.4) can report last-poll freshness without the daemon
+    # process running (AR14). A heartbeat-write failure must not fail
+    # the cycle — it is diagnostic state, not audit data.
+    try:
+        await store.set_meta(f"last_poll_{marketplace}", clock().isoformat())
+    except Exception as exc:
+        log.error(
+            "poll_heartbeat_write_failed",
+            extra={"marketplace": marketplace, "error_class": exc.__class__.__name__},
+        )
+
     log.info(
         "poll_cycle_complete",
         extra={

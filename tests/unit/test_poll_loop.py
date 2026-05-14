@@ -166,6 +166,7 @@ class _FakeStore(Store):
         self.snooze_until: dict[EntryKey, datetime] = {}
         self.record_seen_calls: list[tuple[str, EntryKey]] = []
         self.record_alert_calls: list[AlertSnapshot] = []
+        self.meta: dict[str, str] = {}
 
     async def is_seen(self, listing_id: str, entry_key: EntryKey) -> bool:
         return (listing_id, entry_key) in self.seen
@@ -196,6 +197,15 @@ class _FakeStore(Store):
 
     async def record_callback(self, callback: CallbackAudit) -> None:
         return None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        self.meta[key] = value
+
+    async def get_meta(self, key: str) -> str | None:
+        return self.meta.get(key)
+
+    async def get_all_meta(self) -> dict[str, str]:
+        return dict(self.meta)
 
     async def record_tap_event(self, tap: TapEventAudit) -> None:
         raise AssertionError("Phase 2 audit should not run in Phase 1 cycle")
