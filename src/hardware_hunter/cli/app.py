@@ -335,9 +335,59 @@ def cmd_validate_config(
 
 
 @app.command("test-search")
-def cmd_test_search() -> None:
-    """Run a one-shot search against a marketplace adapter (Epic 3)."""
-    _placeholder()
+def cmd_test_search(
+    query: Annotated[
+        str,
+        typer.Argument(help="A wishlist entry ref, or an arbitrary free-text query."),
+    ],
+    marketplace: Annotated[
+        str | None,
+        typer.Option("--marketplace", help="Limit to one marketplace: wallapop or ebay."),
+    ] = None,
+    evaluate: Annotated[
+        bool,
+        typer.Option("--evaluate", help="Run the LLM evaluator on each result (uses cache)."),
+    ] = False,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: 'human' (default) or 'json'."),
+    ] = "human",
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
+    ] = _DEFAULT_DATA_DIR,
+    config_path: Annotated[
+        Path,
+        typer.Option("--config-path", "-c", help="Path to config.yaml."),
+    ] = _DEFAULT_CONFIG_PATH,
+    wishlist_path: Annotated[
+        Path,
+        typer.Option("--wishlist-path", "-w", help="Path to wishlist.yaml."),
+    ] = _DEFAULT_WISHLIST_PATH,
+    env_path: Annotated[
+        Path,
+        typer.Option("--env-path", "-e", help="Path to .env."),
+    ] = _DEFAULT_ENV_PATH,
+) -> None:
+    """Dry-run a marketplace search — no alerts, no state writes (Story 4.6)."""
+    from hardware_hunter.cli.commands.test_search_cmd import run
+    from hardware_hunter.config.config_yaml import load_config
+    from hardware_hunter.config.env import load_env_or_exit
+    from hardware_hunter.config.wishlist_yaml import load_wishlist
+
+    env = load_env_or_exit(env_path)
+    exit_code = run(
+        query_or_entry=query,
+        env=env,
+        config=load_config(config_path),
+        wishlist=load_wishlist(wishlist_path),
+        data_dir=data_dir,
+        marketplace=marketplace,
+        evaluate=evaluate,
+        output_format=output_format,
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command("explain")

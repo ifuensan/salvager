@@ -138,7 +138,6 @@ def test_bare_invocation_without_env_exits_missing_creds() -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["test-search"],
         ["explain"],
         ["logs"],
         ["smoke-test"],
