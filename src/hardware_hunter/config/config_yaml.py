@@ -98,6 +98,17 @@ class LoggingConfig(BaseModel):
     level: LogLevel = "info"
 
 
+class ObservabilityConfig(BaseModel):
+    """Degradation-reporting knobs (NFR-R3, Story 4.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Repeated ``(event, ctx)`` degradations inside this window emit only
+    #: one Telegram alert — the log + health state still update for every
+    #: occurrence. Prevents alert storms during cascading failures.
+    degradation_dedup_window_seconds: Annotated[int, Field(ge=0)] = 300
+
+
 class PathsConfig(BaseModel):
     """Operator-owned state locations (NFR-PR1, NFR-S2, AR17)."""
 
@@ -125,6 +136,7 @@ class ConfigModel(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     ebay: EbayConfig = Field(default_factory=EbayConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
 
 

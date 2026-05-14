@@ -96,6 +96,16 @@ logging:
   level: info
 
 # ─────────────────────────────────────────────────────────────────────────
+# observability — degradation reporting (NFR-R3)
+# ─────────────────────────────────────────────────────────────────────────
+observability:
+  # Repeated degradations of the same (event, context) within this many
+  # seconds emit only ONE Telegram alert — the structured log and the
+  # health state still update on every occurrence. Prevents alert storms
+  # during cascading failures. 0 disables dedup (every event Telegrams).
+  degradation_dedup_window_seconds: 300
+
+# ─────────────────────────────────────────────────────────────────────────
 # paths — operator-owned state (NFR-PR1, NFR-S2, AR17)
 # ─────────────────────────────────────────────────────────────────────────
 paths:
