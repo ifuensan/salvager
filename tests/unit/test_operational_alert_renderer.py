@@ -54,6 +54,14 @@ _FIXTURES: dict[EventName, tuple[Severity, dict[str, Any]]] = {
         "warn",
         {"error_class": "RuntimeError", "marketplace": "wallapop"},
     ),
+    EventName.circuit_open: (
+        "warn",
+        {
+            "consecutive_failures": 3,
+            "threshold": 3,
+            "last_affected_entry": "WD Red Plus 4TB / WD40EFPX",
+        },
+    ),
 }
 
 

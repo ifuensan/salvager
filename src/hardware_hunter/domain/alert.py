@@ -369,9 +369,9 @@ class EventName(enum.Enum):
     llm_provider_rate_limited = "llm_provider_rate_limited"
     entry_snoozed = "entry_snoozed"
     poll_cycle_error = "poll_cycle_error"
-    # TODO(Epic 5 — Story 5.11): Phase 2 operational variants land here —
-    # phase2_disabled_global, phase2_disabled_entry, reconciliation_tripped,
-    # smoke_test_drift, circuit_breaker_opened.
+    # Phase 2 — Story 5.5 lands the first variant here (the circuit-breaker
+    # lockout); the remaining Phase 2 lifecycle events follow in Story 5.11.
+    circuit_open = "circuit_open"
 
 
 def _prose(text: str) -> str:
@@ -488,6 +488,22 @@ def _body_entry_snoozed(ctx: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _body_circuit_open(ctx: Mapping[str, Any]) -> list[str]:
+    failures = ctx.get("consecutive_failures", "—")
+    threshold = ctx.get("threshold", "—")
+    last_entry = str(ctx.get("last_affected_entry", "—"))
+    return [
+        _prose(f"Causa: {failures} fallos consecutivos (umbral: {threshold})"),
+        _prose(f"Última entrada afectada: {last_entry}"),
+        _prose("Estado actual: Fase 2 desactivada globalmente"),
+        "",
+        _prose("Próximo paso:"),
+        _prose("1. ") + _cmd("hardware-hunter audit show --last 5"),
+        _prose("2. revisa la causa y parchea si es un bug"),
+        _prose("3. ") + _cmd("hardware-hunter phase2 enable <entry>"),
+    ]
+
+
 def _body_poll_cycle_error(ctx: Mapping[str, Any]) -> list[str]:
     error_class = str(ctx.get("error_class", "—"))
     marketplace = str(ctx.get("marketplace", "—"))
@@ -552,6 +568,9 @@ _OPERATIONAL_EVENT_SPECS: Final[dict[EventName, _OperationalEventSpec]] = {
     ),
     EventName.poll_cycle_error: _OperationalEventSpec(
         "warn", "Error en el ciclo de sondeo", _body_poll_cycle_error
+    ),
+    EventName.circuit_open: _OperationalEventSpec(
+        "warn", "Fase 2 desactivada globalmente", _body_circuit_open
     ),
 }
 
