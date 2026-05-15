@@ -1,0 +1,70 @@
+# serializer version: 1
+# name: test_failure_circuit_open_snapshot
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Circuit breaker abierto
+  \- 3 fallos consecutivos · circuito abierto
+  \- Umbral: 3
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_failure_reconciliation_tripped_snapshot
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Reconciliación de precios falló
+  \- Wallapop API: 53,00 €
+  \- Wallapop HTML: 0,53 €
+  \- Tolerancia: 1,00 €
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 1`
+  2\. Revisa el parser HTML antes de reactivar Fase 2 con `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_failure_screenshot_missing_uses_alternate_reassurance
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB
+  Causa: Captura del recibo no disponible
+  Recibo: `WP-2026-0001`
+  
+  La compra puede haberse completado, pero no se capturó el recibo\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --id 42`
+  2\. `hardware-hunter phase2 reconcile WP-2026-0001`
+  '''
+# ---
+# name: test_success_escapes_entry_name_specials
+  '''
+  ✅ *Comprado* · 55,00 € · Wallapop Pay
+  Receipt: `WP-2026-0001`
+  Listing: WD\_Red\+Plus \*4TB\* \(ref\!\)
+  Tiempo total: 42 s
+  `hardware-hunter audit show --id 7` para el registro completo de eventos\.
+  '''
+# ---
+# name: test_success_handles_large_receipt
+  '''
+  ✅ *Comprado* · 1\.234,56 € · eBay Checkout
+  Receipt: `WP-2026-0001-VERY-LONG-RECEIPT-ID-X9`
+  Listing: Crucial 16GB DDR4 3200 \(CT16G4DFD832A\)
+  Tiempo total: 180 s
+  `hardware-hunter audit show --id 99` para el registro completo de eventos\.
+  '''
+# ---
+# name: test_success_renders_locked_anatomy
+  '''
+  ✅ *Comprado* · 55,00 € · Wallapop Pay
+  Receipt: `WP-2026-0001`
+  Listing: WD Red Plus 4TB \(WD40EFPX\)
+  Tiempo total: 42 s
+  `hardware-hunter audit show --id 42` para el registro completo de eventos\.
+  '''
+# ---

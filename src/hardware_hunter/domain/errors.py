@@ -14,6 +14,8 @@ out of orchestration, which is the whole point.
 
 from __future__ import annotations
 
+import enum
+
 
 class MarketplaceError(RuntimeError):
     """Common base for any marketplace-shaped adapter failure."""
@@ -226,3 +228,28 @@ class TelegramConfigError(TelegramError):
     """Telegram returned a non-retryable 4xx — token invalid, chat ID
     wrong, bot kicked from chat, etc. The daemon stops attempting
     deliveries until the operator fixes the configuration."""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 2 buy outcomes — Story 5.3 / Story 5.9
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@enum.unique
+class BuyFailureReason(enum.Enum):
+    """Closed set of reasons a Phase 2 buy can abort or fail.
+
+    Final per Story 5.3 AC. Every variant is renderable by
+    :func:`hardware_hunter.domain.alert.render_phase2_buy_failure` —
+    adding a new variant requires a PRD amendment AND a render-table
+    entry, never a silent fall-through.
+    """
+
+    reconciliation_tripped = "reconciliation_tripped"
+    ui_check_failed = "ui_check_failed"
+    circuit_open = "circuit_open"
+    missing_element = "missing_element"
+    marketplace_error = "marketplace_error"
+    timeout = "timeout"
+    screenshot_missing = "screenshot_missing"
+    payment_rail_unavailable = "payment_rail_unavailable"

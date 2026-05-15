@@ -26,8 +26,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from hardware_hunter.domain.errors import BuyFailureReason
 from hardware_hunter.domain.evaluation import ListingEvaluation
 from hardware_hunter.domain.listing import Listing
+from hardware_hunter.domain.phase2_audit import TransactionRecord
 
 Phase = Literal["phase1", "phase2"]
 ParseMode = Literal["MarkdownV2"]
@@ -335,6 +337,210 @@ def render_phase2_listing_alert(
         photo_url=photo_url,
         inline_keyboard=[_phase2_button_row(str(snapshot.alert_id))],
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 2 receipt + failure renderers — Stories 5.8 / 5.9
+# ─────────────────────────────────────────────────────────────────────────
+
+#: Mandatory reassurance line on every buy-failure variant (UX-DR10 /
+#: FR28). The trailing period is part of the verbatim text; it renders
+#: as ``\.`` in MarkdownV2 (Telegram un-escapes back to ``.`` for the
+#: user). Tests assert the escaped form.
+REASSURANCE_LINE: Final[str] = "La compra NO se ha ejecutado."
+
+#: Special-case reassurance for ``screenshot_missing`` — the buy may
+#: have actually succeeded, just without a captured receipt.
+SCREENSHOT_MISSING_REASSURANCE: Final[str] = (
+    "La compra puede haberse completado, pero no se capturó el recibo."
+)
+
+#: Human-friendly labels for the persisted ``payment_method`` enum.
+_PAYMENT_METHOD_LABELS: Final[dict[str, str]] = {
+    "wallapop_pay": "Wallapop Pay",
+    "ebay_checkout": "eBay Checkout",
+}
+
+#: Per-variant short cause label shown on row 2 of the failure alert.
+_BUY_FAILURE_CAUSE_LABELS: Final[dict[str, str]] = {
+    "reconciliation_tripped": "Reconciliación de precios falló",
+    "ui_check_failed": "Verificación de UI falló",
+    "circuit_open": "Circuit breaker abierto",
+    "missing_element": "Elemento esperado no encontrado",
+    "marketplace_error": "Error en el marketplace",
+    "timeout": "Timeout durante la compra",
+    "screenshot_missing": "Captura del recibo no disponible",
+    "payment_rail_unavailable": "Raíl de pago no disponible",
+}
+
+
+def render_phase2_buy_success(
+    transaction: TransactionRecord,
+    *,
+    entry_display_name: str,
+    audit_id: int,
+) -> RenderedAlert:
+    """Render the Phase 2 buy-success receipt — Story 5.8 (FR36 / UX-DR9).
+
+    The receipt is *sacred*: the photo is the captured confirmation page
+    and the body carries only factual fields (no celebration emoji
+    other than the lead ``✅``). The orchestrator MUST divert to
+    :func:`render_phase2_buy_failure` with ``reason=screenshot_missing``
+    when ``transaction.screenshot_path`` is missing; this renderer
+    raises if called without one, so a programming error fails loud
+    instead of producing an empty-photo alert.
+    """
+    if not transaction.screenshot_path:
+        raise ValueError(
+            "render_phase2_buy_success requires a non-empty screenshot_path; "
+            "the orchestrator must call render_phase2_buy_failure"
+            "(reason=screenshot_missing) instead (UX-DR9)"
+        )
+
+    severity = SEVERITY_TOKENS["phase2_buy_success"]
+    price = escape_markdown_v2(_format_price_es(transaction.price_paid_eur))
+    payment = escape_markdown_v2(
+        _PAYMENT_METHOD_LABELS.get(transaction.payment_method, transaction.payment_method)
+    )
+    entry = escape_markdown_v2(entry_display_name)
+
+    rows = [
+        f"{severity} *Comprado* · {price} · {payment}",
+        f"Receipt: `{transaction.receipt_id}`",
+        f"Listing: {entry}",
+        f"Tiempo total: {transaction.total_seconds} s",
+        _cmd(f"hardware-hunter audit show --id {audit_id}")
+        + _prose(" para el registro completo de eventos."),
+    ]
+
+    return RenderedAlert(
+        text="\n".join(rows),
+        parse_mode="MarkdownV2",
+        photo_url=transaction.screenshot_path,
+        inline_keyboard=None,
+    )
+
+
+def render_phase2_buy_failure(
+    reason: BuyFailureReason,
+    *,
+    entry_display_name: str,
+    ctx: Mapping[str, Any] | None = None,
+) -> RenderedAlert:
+    """Render a Phase 2 buy-failure alert — Story 5.9 (FR28 / UX-DR10).
+
+    The reassurance line — :data:`REASSURANCE_LINE` (or the
+    ``screenshot_missing`` special case) — is non-optional: the user
+    must answer "did the agent buy it?" from the alert alone. The
+    per-variant detail rows and next-step CLI commands live in dedicated
+    helpers so the property-test (5.16) can enumerate them.
+    """
+    ctx_map = dict(ctx) if ctx is not None else {}
+    severity = SEVERITY_TOKENS["phase2_buy_failure"]
+    entry = escape_markdown_v2(entry_display_name)
+    cause = escape_markdown_v2(_BUY_FAILURE_CAUSE_LABELS[reason.value])
+
+    rows: list[str] = [
+        f"{severity} *Compra abortada* · {entry}",
+        _prose("Causa: ") + cause,
+    ]
+    rows.extend(_buy_failure_detail_rows(reason, ctx_map))
+    rows.append("")
+    if reason.value == "screenshot_missing":
+        rows.append(_prose(SCREENSHOT_MISSING_REASSURANCE))
+    else:
+        rows.append(_prose(REASSURANCE_LINE))
+    rows.extend(_buy_failure_next_steps(reason, ctx_map))
+
+    return RenderedAlert(
+        text="\n".join(rows),
+        parse_mode="MarkdownV2",
+        photo_url=None,
+        inline_keyboard=None,
+    )
+
+
+def _buy_failure_detail_rows(reason: BuyFailureReason, ctx: Mapping[str, Any]) -> list[str]:
+    """Variant-specific bullet rows that explain the failure."""
+    name = reason.value
+    if name == "reconciliation_tripped":
+        api = _price_or_dash(ctx.get("api_price"))
+        html = _price_or_dash(ctx.get("html_price"))
+        tol = _price_or_dash(ctx.get("tolerance_eur"))
+        return [
+            _prose("- Wallapop API: ") + api,
+            _prose("- Wallapop HTML: ") + html,
+            _prose("- Tolerancia: ") + tol,
+        ]
+    if name == "circuit_open":
+        failures = ctx.get("consecutive_failures", "—")
+        threshold = ctx.get("threshold", "—")
+        return [
+            _prose(f"- {failures} fallos consecutivos · circuito abierto"),
+            _prose(f"- Umbral: {threshold}"),
+        ]
+    if name == "screenshot_missing":
+        receipt_id = ctx.get("receipt_id")
+        if receipt_id is not None:
+            return [_prose("Recibo: ") + f"`{receipt_id}`"]
+        return []
+    if name in {"ui_check_failed", "missing_element"}:
+        missing = ctx.get("missing", "—")
+        return [_prose(f"- Elementos faltantes: {missing}")]
+    if name in {"marketplace_error", "timeout", "payment_rail_unavailable"}:
+        detail = ctx.get("error_class") or ctx.get("detail") or "—"
+        return [_prose(f"- Detalle: {detail}")]
+    return []
+
+
+def _buy_failure_next_steps(reason: BuyFailureReason, ctx: Mapping[str, Any]) -> list[str]:
+    """Variant-specific numbered next-step CLI hints."""
+    name = reason.value
+    if name == "reconciliation_tripped":
+        return [
+            "",
+            _prose("Próximo paso:"),
+            _prose("1. ") + _cmd("hardware-hunter audit show --last 1"),
+            _prose("2. Revisa el parser HTML antes de reactivar Fase 2 con ")
+            + _cmd("hardware-hunter phase2 enable <entry>"),
+        ]
+    if name == "circuit_open":
+        return [
+            "",
+            _prose("Próximo paso:"),
+            _prose("1. ") + _cmd("hardware-hunter audit show --last 5"),
+            _prose("2. ") + _cmd("hardware-hunter phase2 enable <entry>"),
+        ]
+    if name == "screenshot_missing":
+        transaction_id = ctx.get("transaction_id", "<transaction_id>")
+        receipt_id = ctx.get("receipt_id")
+        steps = [
+            "",
+            _prose("Próximo paso:"),
+            _prose("1. ") + _cmd(f"hardware-hunter audit show --id {transaction_id}"),
+        ]
+        if receipt_id is not None:
+            steps.append(_prose("2. ") + _cmd(f"hardware-hunter phase2 reconcile {receipt_id}"))
+        return steps
+    # Generic catch-all next-step block for the remaining variants.
+    return [
+        "",
+        _prose("Próximo paso:"),
+        _prose("1. ") + _cmd("hardware-hunter audit show --last 5"),
+        _prose("2. ") + _cmd("hardware-hunter phase2 enable <entry>"),
+    ]
+
+
+def _price_or_dash(value: object) -> str:
+    """Format a ctx price (Decimal or string) in ES style; em-dash on missing."""
+    if value is None:
+        return _prose("—")
+    if isinstance(value, Decimal):
+        return escape_markdown_v2(_format_price_es(value))
+    try:
+        return escape_markdown_v2(_format_price_es(Decimal(str(value))))
+    except (ValueError, ArithmeticError):
+        return escape_markdown_v2(str(value))
 
 
 # ─────────────────────────────────────────────────────────────────────────
