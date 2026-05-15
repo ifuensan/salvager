@@ -70,6 +70,19 @@ jobs:
       - name: AST-based adapter discipline lint
         run: uv run python scripts/adapter_discipline_lint.py
 
+  payment-rail:
+    name: payment-rail (FR25 / NFR-S5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Payment-rail enforcement lint
+        run: uv run python scripts/payment_rail_lint.py
+
   dep-footprint:
     name: dep-footprint (NFR-M5)
     runs-on: ubuntu-latest
