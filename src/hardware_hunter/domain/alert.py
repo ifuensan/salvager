@@ -268,6 +268,75 @@ def render_phase1_listing_alert(snapshot: AlertSnapshot) -> RenderedAlert:
     )
 
 
+def _phase2_button_row(alert_id: str) -> list[InlineButton]:
+    """The Phase 2 button row: Comprar · Saltar · Ver (UX-DR4, FR23).
+
+    Order is locked: ``Comprar`` first so the affirmative action sits in
+    the visually-dominant left slot. ``callback_data`` carries the
+    AlertSnapshot UUID — same lookup path as Phase 1.
+    """
+    return [
+        InlineButton(text=BUTTON_LABELS["buy"], callback_data=f"listing:buy:{alert_id}"),
+        InlineButton(text=BUTTON_LABELS["skip_phase2"], callback_data=f"listing:skip:{alert_id}"),
+        InlineButton(text=BUTTON_LABELS["view"], callback_data=f"listing:view:{alert_id}"),
+    ]
+
+
+def render_phase2_listing_alert(
+    snapshot: AlertSnapshot, phase2_max_price_eur: Decimal
+) -> RenderedAlert:
+    """Render a Phase 2 listing alert (Story 5.2 / FR23 / FR24 / UX-DR7).
+
+    Identical to :func:`render_phase1_listing_alert` except for three
+    locked substitutions:
+
+      - Severity prefix ``📦`` → ``🟢`` (operator-visible signal that
+        the Buy button is live for this alert).
+      - Confidence row gets a ``· Phase 2 max: <€>`` suffix carrying the
+        per-entry ceiling the autonomous buy will honour (FR26).
+      - Inline keyboard is ``[Comprar · Saltar · Ver]`` instead of the
+        Phase 1 ``[Ver · Saltar · Posponer]`` row.
+
+    The container-aware Direction E split (Story 3.11) applies here too:
+    a Phase 2 alert for a wrapper listing still gets the indented
+    wrapper / extracted rows between the location and the take.
+    """
+    listing = snapshot.listing
+    evaluation = snapshot.evaluation
+
+    severity = SEVERITY_TOKENS["phase2_listing"]
+    name = escape_markdown_v2(snapshot.entry_display_name)
+    price = escape_markdown_v2(_format_price_es(listing.price_eur))
+    location = escape_markdown_v2(listing.location or "—")
+    marketplace = escape_markdown_v2(listing.marketplace.capitalize())
+    take = escape_markdown_v2(evaluation.one_line_take)
+    confidence = escape_markdown_v2(evaluation.confidence)
+    max_price = escape_markdown_v2(_format_price_es(phase2_max_price_eur))
+
+    rows: list[str] = [
+        f"{severity} *{name}* — *{price}*",
+        f"📍 {location} · {marketplace}",
+    ]
+
+    if evaluation.is_container:
+        wrapper = escape_markdown_v2(evaluation.wrapper_text or "—")
+        extracted = escape_markdown_v2(evaluation.extracted_text or "—")
+        rows.append(f"  ↪︎ Wrapper: {wrapper}")
+        rows.append(f"  ↪︎ Extracted: {extracted}")
+
+    rows.append(f"_{take}_")
+    rows.append(f"🔍 Confidence: {confidence} · Phase 2 max: {max_price}")
+
+    photo_url = listing.photo_urls[0] if listing.photo_urls else None
+
+    return RenderedAlert(
+        text="\n".join(rows),
+        parse_mode="MarkdownV2",
+        photo_url=photo_url,
+        inline_keyboard=[_phase2_button_row(str(snapshot.alert_id))],
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Operational alert renderer — Story 4.1 (FR21 / UX-DR13 / UX-DR14 / UX-DR15)
 # ─────────────────────────────────────────────────────────────────────────

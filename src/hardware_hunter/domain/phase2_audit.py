@@ -62,4 +62,27 @@ class SmokeTestRecord(BaseModel):
     delta_pct: Decimal
 
 
-__all__ = ["SmokeTestRecord", "TapEventRecord", "TransactionRecord"]
+class Phase2StateSnapshot(BaseModel):
+    """The mutable ``phase2_state`` row, as read at one point in time.
+
+    The pre-flight gate (Story 5.2) and the circuit breaker (Story 5.5)
+    both consume this snapshot — it carries the lockout flag, the
+    consecutive-failure counter, and the freshest smoke-test outcome.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    globally_disabled: bool
+    disabled_at: datetime | None = None
+    disabled_reason: str | None = None
+    consecutive_failures: int
+    last_smoke_result: Literal["pass", "fail"] | None = None
+    last_smoke_at: datetime | None = None
+
+
+__all__ = [
+    "Phase2StateSnapshot",
+    "SmokeTestRecord",
+    "TapEventRecord",
+    "TransactionRecord",
+]

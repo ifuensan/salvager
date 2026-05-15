@@ -661,6 +661,143 @@ def test_summary_initializes_with_marketplace_only() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Phase 2 dispatch — pre-flight gate decides which renderer fires
+# ─────────────────────────────────────────────────────────────────────────
+
+
+from hardware_hunter.domain.phase2_audit import Phase2StateSnapshot  # noqa: E402
+from hardware_hunter.orchestration.phase2_preflight import Phase2Preflight  # noqa: E402
+
+
+class _StubStateReader:
+    def __init__(self, snapshot: Phase2StateSnapshot) -> None:
+        self._snapshot = snapshot
+
+    async def read(self) -> Phase2StateSnapshot:
+        return self._snapshot
+
+
+def _phase2_entry() -> WishlistEntry:
+    return WishlistEntry.model_validate(
+        {
+            "manufacturer": "Western Digital",
+            "model": "WD Red Plus 4TB",
+            "ref": "WD40EFPX",
+            "type": "hdd",
+            "keywords": ["wd red plus 4tb"],
+            "max_price_solo": Decimal("70.00"),
+            "confidence_threshold": "medium",
+            "phase2": {"enabled": True, "max_price_eur": "60.00"},
+        }
+    )
+
+
+def _healthy_state() -> Phase2StateSnapshot:
+    return Phase2StateSnapshot(
+        globally_disabled=False,
+        consecutive_failures=0,
+        last_smoke_result="pass",
+        last_smoke_at=_T0 - timedelta(hours=2),
+    )
+
+
+async def test_phase2_alert_dispatched_when_preflight_passes() -> None:
+    entry = _phase2_entry()
+    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("55.00"))])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+    preflight = Phase2Preflight(
+        state_reader=_StubStateReader(_healthy_state()),
+        circuit_breaker_threshold=3,
+        clock=_utc_t0,
+    )
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        phase2_preflight=preflight,
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 1
+    assert len(store.snapshots) == 1
+    persisted = store.snapshots[0]
+    assert persisted.phase == "phase2"
+    assert persisted.phase2_max_price_eur == Decimal("60.00")
+    # The dispatched Telegram message carries the Phase 2 keyboard.
+    rendered = telegram.sends[0]
+    assert rendered.inline_keyboard is not None
+    assert [b.text for b in rendered.inline_keyboard[0]] == [
+        "✅ Comprar",
+        "❌ Saltar",
+        "👁 Ver",
+    ]
+
+
+async def test_phase2_downgrades_silently_when_preflight_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    entry = _phase2_entry()
+    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("55.00"))])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+    # Circuit open: gate must downgrade.
+    preflight = Phase2Preflight(
+        state_reader=_StubStateReader(
+            Phase2StateSnapshot(
+                globally_disabled=False,
+                consecutive_failures=3,
+                last_smoke_result="pass",
+                last_smoke_at=_T0 - timedelta(hours=2),
+            )
+        ),
+        circuit_breaker_threshold=3,
+        clock=_utc_t0,
+    )
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        phase2_preflight=preflight,
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 1
+    persisted = store.snapshots[0]
+    # Silent downgrade — the persisted snapshot is Phase 1, not Phase 2.
+    assert persisted.phase == "phase1"
+    assert persisted.phase2_max_price_eur is None
+
+    # The downgrade reason is in the structured log.
+    records = _records(capsys.readouterr().out)
+    downgrades = [r for r in records if r.get("event") == "phase2_alert_downgraded"]
+    assert downgrades
+    assert downgrades[0]["reason"] == "circuit_breaker_open"
+
+
+async def test_phase1_path_unchanged_when_no_preflight_supplied() -> None:
+    """No preflight passed → Phase 1 path runs even for opted-in entries."""
+    entry = _phase2_entry()
+    fetcher = _FakeFetcher(response=[_listing("abc123")])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 1
+    persisted = store.snapshots[0]
+    assert persisted.phase == "phase1"
+    assert persisted.phase2_max_price_eur is None
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Adapter discipline — poll_loop stays pure
 # ─────────────────────────────────────────────────────────────────────────
 

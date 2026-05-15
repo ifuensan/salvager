@@ -45,10 +45,16 @@ import uuid as uuid_module
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Final
 from uuid import UUID
 
-from hardware_hunter.domain.alert import AlertSnapshot, render_phase1_listing_alert
+from hardware_hunter.domain.alert import (
+    AlertSnapshot,
+    Phase,
+    render_phase1_listing_alert,
+    render_phase2_listing_alert,
+)
 from hardware_hunter.domain.evaluation import ListingEvaluation
 from hardware_hunter.domain.listing import Listing, Marketplace, SearchQuery
 from hardware_hunter.domain.wishlist import Wishlist, WishlistEntry
@@ -57,6 +63,7 @@ from hardware_hunter.interfaces.page_fetcher import PageFetcher
 from hardware_hunter.interfaces.store import Store
 from hardware_hunter.interfaces.telegram_surface import TelegramSurface
 from hardware_hunter.observability.logging import get_logger
+from hardware_hunter.orchestration.phase2_preflight import Phase2Preflight
 
 #: NFR-P3: per-marketplace cycles cap concurrent LLM evaluations at 8.
 DEFAULT_MAX_CONCURRENT_EVALUATIONS: Final[int] = 8
@@ -98,6 +105,7 @@ async def run_poll_cycle(
     evaluator: ListingEvaluator,
     store: Store,
     telegram: TelegramSurface,
+    phase2_preflight: Phase2Preflight | None = None,
     max_concurrent_evaluations: int = DEFAULT_MAX_CONCURRENT_EVALUATIONS,
     clock: Callable[[], datetime] = _utc_now,
     new_alert_id: Callable[[], UUID] = uuid_module.uuid4,
@@ -167,6 +175,7 @@ async def run_poll_cycle(
                     evaluation=evaluation,
                     telegram=telegram,
                     store=store,
+                    phase2_preflight=phase2_preflight,
                     new_alert_id=new_alert_id,
                     clock=clock,
                     log=log,
@@ -294,6 +303,38 @@ def _passes_threshold(evaluation: ListingEvaluation, threshold: str) -> bool:
     return _CONFIDENCE_RANK[evaluation.confidence] >= _CONFIDENCE_RANK[threshold]
 
 
+async def _select_phase(
+    *,
+    entry: WishlistEntry,
+    listing: Listing,
+    evaluation: ListingEvaluation,
+    phase2_preflight: Phase2Preflight | None,
+    log: object,
+) -> tuple[Phase, Decimal | None]:
+    """Decide which renderer to use; return ``(phase, phase2_max_price_eur)``.
+
+    Returns ``("phase1", None)`` whenever the Phase 2 gate is not
+    available, the entry isn't opted in, or any pre-flight check fails.
+    Returns ``("phase2", entry.phase2.max_price_eur)`` only when every
+    check passes — and emits a structured ``phase2_alert_downgraded``
+    log line for every silent downgrade.
+    """
+    if phase2_preflight is None or not entry.phase2.enabled:
+        return "phase1", None
+    result = await phase2_preflight.check(entry, listing, evaluation)
+    if result.eligible:
+        return "phase2", entry.phase2.max_price_eur
+    log.info(  # type: ignore[attr-defined]
+        "phase2_alert_downgraded",
+        extra={
+            "entry_display_name": entry.display_name,
+            "listing_id": listing.listing_id,
+            "reason": result.reason,
+        },
+    )
+    return "phase1", None
+
+
 async def _dispatch_alert(
     *,
     entry: WishlistEntry,
@@ -301,11 +342,17 @@ async def _dispatch_alert(
     evaluation: ListingEvaluation,
     telegram: TelegramSurface,
     store: Store,
+    phase2_preflight: Phase2Preflight | None,
     new_alert_id: Callable[[], UUID],
     clock: Callable[[], datetime],
     log: object,
 ) -> bool:
     """Build snapshot → render → send → persist. Return True on full success.
+
+    The Phase 2 renderer (with the Buy keyboard) is selected only when
+    every check in :class:`Phase2Preflight` passes; any failure
+    downgrades silently to the Phase 1 renderer (UX-DR7) and emits a
+    ``phase2_alert_downgraded`` log so an operator can audit the why.
 
     Persistence (record_alert_snapshot + record_seen) only runs after
     Telegram confirms the message_id. A delivery failure leaves the
@@ -313,18 +360,31 @@ async def _dispatch_alert(
     duplicate-eval on the next pass, but the cache (Story 3.10) absorbs
     that.
     """
+    phase, phase2_max_price_eur = await _select_phase(
+        entry=entry,
+        listing=listing,
+        evaluation=evaluation,
+        phase2_preflight=phase2_preflight,
+        log=log,
+    )
+
     snapshot = AlertSnapshot(
         alert_id=new_alert_id(),
         entry_key=entry.entry_key,
         entry_display_name=entry.display_name,
         listing=listing,
         evaluation=evaluation,
-        phase="phase1",
+        phase=phase,
+        phase2_max_price_eur=phase2_max_price_eur,
         rendered_at=clock(),
     )
 
     try:
-        rendered = render_phase1_listing_alert(snapshot)
+        rendered = (
+            render_phase2_listing_alert(snapshot, phase2_max_price_eur)
+            if phase == "phase2" and phase2_max_price_eur is not None
+            else render_phase1_listing_alert(snapshot)
+        )
         _message_id = await telegram.send(rendered)
     except Exception as exc:
         log.error(  # type: ignore[attr-defined]
