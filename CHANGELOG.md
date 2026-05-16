@@ -12,18 +12,41 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
-## [1.0.0] — _pending Story 5.17 release-audit sign-off_
+## [1.0.0] — _future, gated on production burn-in of v0.2.0_
 
-**Phase 2 stable.** The autonomous-purchase loop ships behind the
-safety stack and the non-bypassable Telegram tap. The Phase 1 →
-Phase 2 stabilisation gate has been passed; entries opted in via
-`hardware-hunter phase2 enable <entry>` can complete a buy through
-Wallapop Pay or eBay.es checkout without operator intervention beyond
-the initial tap.
+Tagging `v1.0.0` requires empirical evidence from running v0.2.0
+against real Wallapop + eBay.es traffic in the operator's homelab,
+including at least one successful Phase 2 purchase end-to-end with
+the safety stack engaging as designed. Until then the codebase is
+shipped as v0.2.x with semver 0.x semantics (breaking changes are
+allowed without a major bump).
 
-Tag: `v1.0.0` → GHCR `ghcr.io/ifuensan/hardware-hunter:v1.0.0`,
-`:1.0`, `:latest` (semver auto-tagging from
+---
+
+## [0.2.0] — _pending publish_
+
+**Phase 1 + Phase 2 feature-complete preview.** All Epic 2-5 code has
+shipped + been audited for rendering invariants (UX-DR22/23/32 audit
+recorded in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md)
+— "v1.0" in the path refers to the eventual stability gate; the audit
+applies to v0.2.0 today and to v1.0.0 when that ships).
+
+**Not yet validated in production.** The poll loop, the LLM
+evaluation, the cross-source reconciliation, the circuit breaker,
+the smoke test, and the autonomous purchase have all passed unit +
+integration tests + the release-gate manual audit, but the operator
+has not yet run the agent against live Wallapop + eBay.es traffic for
+a sustained period. v0.2.0 is published so the operator can start
+that burn-in window on their own homelab and surface issues that
+synthetic tests cannot reach.
+
+Tag: `v0.2.0` → GHCR `ghcr.io/ifuensan/hardware-hunter:0.2.0`,
+`:0.2`, `:latest` (semver auto-tagging from
 `.github/workflows/release.yml`).
+
+Breaking changes between 0.2.x and the next minor/major (0.3.0, 1.0.0,
+etc.) are allowed without notice per semver 0.x semantics. Operators
+pinning to `:0.2.0` exactly are protected from those.
 
 ### Added
 
@@ -96,12 +119,19 @@ Tag: `v1.0.0` → GHCR `ghcr.io/ifuensan/hardware-hunter:v1.0.0`,
 
 ### Changed
 
-- `version` in `pyproject.toml` bumped `0.1.0` → `1.0.0`. The
+- `version` in `pyproject.toml` bumped `0.1.0` → `0.2.0`. The
   `hardware-hunter version` CLI command surfaces the new value alongside
   the git short SHA.
-- README badge + install instructions recommend `:v1.0.0` as the
-  pinned tag for new deployments (`:latest` continues to track the
-  newest stable release).
+- README status block reframed: the project is now a "Phase 1 + Phase 2
+  feature-complete preview, pending production burn-in" rather than a
+  pre-poll-loop skeleton. The recommended pinned tag is `:0.2.0`
+  (or pull `:latest` for the most recent release).
+- The obsolete "Hermes Agent runs as a remote service…" paragraph in
+  README "Architecture" is removed. Hermes was dropped from the v0.x
+  scope per the 2026-05-13 design pivot (memory note); scheduling now
+  runs in-process via `adapters/asyncio_scheduler/` and TinyFish is
+  reached directly via its SDK from `adapters/wallapop_tinyfish/` (Phase
+  1 fallback) and `adapters/tinyfish_browser/` (Phase 2 buy flows).
 
 ### Security
 
@@ -115,8 +145,17 @@ Tag: `v1.0.0` → GHCR `ghcr.io/ifuensan/hardware-hunter:v1.0.0`,
 
 ### Project notes
 
-- Schema locked at v2 — future schema-breaking changes require a major
-  version bump per NFR-M4.
+- Schema reaches version 2 (Phase 1 + Phase 2 migrations applied). The
+  schema is NOT locked yet — v0.x semantics allow breaking changes;
+  the lock kicks in at v1.0.
+- Promotion criteria to v1.0.0 (informal, refined as burn-in surfaces
+  reality):
+  1. At least 2 weeks of v0.2.0 running continuously against
+     production Wallapop + eBay.es traffic without unhandled crashes.
+  2. At least one Phase 2 purchase completed end-to-end with the
+     safety stack engaging or being verified as inert.
+  3. No critical rendering regression surfaced between v0.2.0 and
+     candidate v1.0.0 (re-audit if any Rich / domain.alert change lands).
 - Post-v1.0 deferred items (multi-marketplace expansion, additional
   LLM providers as config-only, the arbitrage-as-separate-repo
   path) live in [ROADMAP.md](ROADMAP.md).
@@ -148,6 +187,7 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/hardware-hunter:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/hardware-hunter/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/ifuensan/hardware-hunter/compare/v0.2.0...HEAD
 [1.0.0]: https://github.com/ifuensan/hardware-hunter/releases/tag/v1.0.0
+[0.2.0]: https://github.com/ifuensan/hardware-hunter/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ifuensan/hardware-hunter/releases/tag/v0.1.0

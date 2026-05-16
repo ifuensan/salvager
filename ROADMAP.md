@@ -4,41 +4,42 @@ This document names what's planned, what's deferred post-launch, what's permanen
 
 ---
 
-## Where we are (May 2026)
+## Where we are
 
-**Epic 1 (Foundation — Installable Skeleton & OSS Posture) is complete.** `v0.1.0` published to GHCR.
+**`v0.2.0` shipped — Phase 1 + Phase 2 feature-complete preview.** All five planned epics' code has landed:
 
-- ✓ Story 1.1 — uv-managed Python package + hexagonal directory layout
-- ✓ Story 1.2 — CI quality gates with adapter discipline lint (NFR-M1)
-- ✓ Story 1.3 — Docker image + GHCR release workflow
-- ✓ Story 1.4 — Tracked example configuration files
-- ✓ Story 1.5 — OSS posture documentation (this file)
-- ✓ Story 1.6 — Structured JSON Lines logging foundation (NFR-O1 / NFR-R5)
-- ✓ Story 1.7 — rich-based CLI rendering helpers + locked theme tokens (UX-DR16)
-- ✓ Story 1.8 — typer CLI skeleton + `version` subcommand (FR39 / FR48)
+- ✓ **Epic 1** (Foundation) — installable skeleton, hexagonal layout, CI gates, Docker image. Shipped as `v0.1.0` in April 2026.
+- ✓ **Epic 2** (Wishlist, Config, Credentials) — pydantic v2 schemas, `.env` loader, wishlist YAML round-trip.
+- ✓ **Epic 3** (Polling + Adapters) — Wallapop two-path fetcher (unofficial API + TinyFish fallback), eBay API adapter, async scheduler, listing evaluation via Gemini Flash.
+- ✓ **Epic 4** (Telegram Surface + CLI Operability) — alert renderer, callback handler, snooze flow, audit log + audit/health/explain CLI commands, operational alert variants.
+- ✓ **Epic 5** (Phase 2 Autonomous Purchase + Safety Stack) — Phase 2 listing/buy renderers, TinyFish browser adapter (Wallapop Pay + eBay checkout), cross-source + receipt reconciliation, per-purchase circuit breaker, daily synthetic smoke test, BuyOrchestrator, `phase2 enable/disable/status/smoke-test/reconcile` CLI, payment-rail enforcement CI lint, 90% critical-path coverage gate, release-audit tooling.
 
-**Epic 2 (Wishlist Authoring, Configuration & Credentials) begins next.** First story: `WishlistEntry` / `Wishlist` pydantic v2 schema as the single source of truth for FR1/FR2/FR4/FR5.
+**Promotion to `v1.0.0` is gated on production burn-in**, not feature completion. See [`CHANGELOG.md`](CHANGELOG.md) for the v0.2.0 release notes and the `[1.0.0] — future` placeholder spelling out the promotion criteria.
 
-See [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md) for the full 5-epic / 61-story breakdown.
+The full epic + story breakdown lives in [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md). The release-gate audit artefact lives in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md).
 
 ---
 
-## Near-term: Phase 1 and Phase 2
+## Path to v1.0
 
-**Phase 1 — alerts only.** Deliverable: daemon polls Wallapop + eBay.es, evaluates listings against the wishlist via Gemini Flash, dispatches Telegram alerts with `[👁 Ver] [🙅 Saltar] [😴 Posponer 24h]` buttons. Covered by Epics 2 + 3 + 4. Ships across v0.x releases.
+The v0.2.0 release ships all Phase 1 + Phase 2 code. v1.0.0 is gated on production burn-in, not on additional features.
 
-**Phase 1 stabilization gate.** 4–8 week run with the daemon in production before Phase 2 enables. This is a real gate, not a formality — per [PRD §Phased Development](_bmad-output/planning-artifacts/prd.md). Phase 2 work doesn't start until Phase 1 is empirically reliable on the operator's own hunt.
+**Promotion criteria** (informal; tightened if reality requires it):
 
-**Phase 2 — autonomous purchase.** Deliverable: opt entries into Phase 2 via `hardware-hunter phase2 enable <entry>`, receive Phase 2 alerts with `[✅ Comprar] [❌ Saltar] [👁 Ver]` buttons, the safety stack (cross-source price reconciliation + receipt-vs-alert reconciliation + daily synthetic smoke test + per-purchase circuit breaker) catches malformed data before any transaction. Covered by Epic 5. Ships `v1.0`.
+1. ≥ 2 weeks of v0.2.0 running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
+2. ≥ 1 Phase 2 purchase completed end-to-end (or one verified Phase 2 abort with the safety stack engaging as designed). Counts as "the autonomous-buy path got exercised against the real world, not just synthetic tests".
+3. No critical rendering regression surfaced between v0.2.0 and the v1.0.0 candidate (re-audit if `domain/alert.py` or the styling layer changes).
+4. **OQ3** — measured per-purchase TinyFish Browser cost (NFR-C2 cap is ≤ €1.00). v0.2.0 is when this number first appears empirically; v1.0.0 confirms it.
+5. **OQ6** — language-register bias check on the first batch of real Telegram alerts. Castilian is the supported locale; Catalan / regional Spanish / Basque listings get best-effort treatment with a README disclosure at v1.
 
-**Phase 2 release gates** (Story 5.17):
-- Telegram client variance manual test (iOS / Android / Telegram desktop / Telegram Web) — UX-DR32.
-- Color-blind + accessibility audit (Coblis / Color Oracle / VoiceOver) — UX-DR33.
-- ≥ 90% line coverage on the Phase 2 critical-path modules (NFR-M2) — Story 5.15.
+The release-gate audit (Story 5.17) was performed against the v0.2.0 candidate and recorded `RESULT: PASS` in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md). The audit applies to v1.0.0 too as long as no rendering / accessibility change lands between releases.
 
-**Open Questions blocking Phase 2 enablement** (per PRD):
-- **OQ3** — measured per-purchase TinyFish Browser cost (currently ≤ €1.00 worst-case in NFR-C2; needs empirical confirmation on first 5 Phase 2 purchases).
-- **OQ6** — language-register bias audit (Castilian vs Catalan / regional Spanish / Basque) for non-Castilian users. Best-effort + README disclosure at v1; structured audit before Phase 2 enables for any user beyond the maintainer.
+**Phase 2 release-gate criteria already met by v0.2.0** (re-stated for completeness):
+
+- Telegram client variance audit (UX-DR32) — passed on Android + Desktop (operator's actual clients).
+- Color-blind audit (UX-DR22) — passed on the 3 simulators (Coblis), distinguishability via shape + text preserved.
+- VoiceOver accessibility (UX-DR23) — passed with documented limitation ([docs/accessibility.md](docs/accessibility.md)).
+- ≥ 90% line coverage on Phase 2 critical-path modules (NFR-M2) — enforced by CI.
 
 ---
 

@@ -10,7 +10,7 @@ A self-hosted personal agent for monitoring second-hand homelab parts. Watches y
 **Wishlist focus:** HDDs (NAS-grade and enterprise) and DDR4 RAM. Extensible to other part types.
 **Distribution:** single Docker image, single docker-compose service.
 
-> **Status (May 2026): foundation shipped, daemon not yet polling.** Epic 1 is complete; `v0.1.0` is on GHCR with the installable skeleton, structured logging, CLI surface, and Docker image. The poll loop, marketplace adapters, and Telegram alert flow are still to come (Epics 2–4). See [ROADMAP.md](ROADMAP.md) for the implementation timeline. Phase 1 (alerts only) ships first; Phase 2 (autonomous purchase) follows after a 4–8 week stabilization window.
+> **Status (May 2026): `v0.2.0` — Phase 1 + Phase 2 feature-complete preview.** All Epic 2–5 code has shipped + been audited for rendering invariants ([release-audit summary](docs/release-audits/v1.0/SUMMARY.md)). The daemon polls Wallapop + eBay.es, evaluates listings against the wishlist via Gemini Flash, dispatches Telegram alerts, and the Phase 2 autonomous-purchase loop is wired end-to-end behind the safety stack and the non-bypassable Telegram tap. **Not yet validated in production**: the operator's burn-in window is in progress; v1.0 promotion is gated on at least 2 weeks of continuous live-traffic operation + one completed Phase 2 purchase. Recommended pinned tag: `ghcr.io/ifuensan/hardware-hunter:0.2.0`. See [CHANGELOG.md](CHANGELOG.md) for v0.2.0 release notes and [ROADMAP.md](ROADMAP.md) for the v1.0 path.
 
 ---
 
@@ -24,7 +24,9 @@ A self-hosted personal agent for monitoring second-hand homelab parts. Watches y
 
 ## Quick start
 
-Prerequisites: Docker + docker-compose, a Telegram bot, a Google Gemini API key, an eBay developer account, and a running Hermes Agent service the daemon can reach (Hermes is operated separately; typical deployment is a Proxmox VM on the operator's host).
+Prerequisites: Docker + docker-compose, a Telegram bot, a Google Gemini API key, an eBay developer account, a TinyFish API key (for the Phase 1 Wallapop fallback path and the Phase 2 buy flows), and a Wallapop / eBay.es account dedicated to the agent (see Legal disclaimer below).
+
+The recommended image tag for new deployments is `ghcr.io/ifuensan/hardware-hunter:0.2.0` (pinned). `:latest` follows the newest release; pin to `:0.2.0` for reproducible deploys during the v1.0 burn-in window.
 
 ```bash
 git clone https://github.com/ifuensan/hardware-hunter
@@ -85,7 +87,7 @@ src/hardware_hunter/
 
 The adapter discipline boundary (NFR-M1, launch-blocker) is enforced by a custom AST-based CI lint at [`scripts/adapter_discipline_lint.py`](scripts/adapter_discipline_lint.py).
 
-Hermes Agent runs as a remote service (typically on a Proxmox VM) providing the scheduler, memory, and MCP routing (including TinyFish). The daemon connects via HTTP/MCP at the `HERMES_URL` configured in `.env`.
+Scheduler runs in-process (asyncio-based, `adapters/asyncio_scheduler/`). TinyFish is reached directly via the official SDK from `adapters/wallapop_tinyfish/` (Phase 1 fallback when the unofficial Wallapop API path fails) and `adapters/tinyfish_browser/` (Phase 2 buy flows for Wallapop Pay + eBay.es checkout). No remote agent-orchestration service is required.
 
 ---
 

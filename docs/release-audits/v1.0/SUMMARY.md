@@ -6,6 +6,17 @@
 | Build SHA | `85252bc` |
 | Auditor | ifuensan |
 | Result | **`RESULT: PASS`** — see §1, §2, §3 verdicts + documented limitations |
+| Applies to | `v0.2.0` (release candidate, published from this audit) and `v1.0.0` (future, gated on production burn-in) provided no rendering / accessibility change lands between releases |
+
+> **About the `v1.0/` folder name.** This audit lives under
+> `docs/release-audits/v1.0/` because Story 5.17 framed it as the
+> pre-v1.0 stability gate. The codebase has since been versioned as
+> `v0.2.0` (an interim release on the path to v1.0; see
+> [`CHANGELOG.md`](../../../CHANGELOG.md)). The audit is fully
+> applicable to v0.2.0 — same code, same rendering, same audit
+> verdict. When v1.0.0 ships after production burn-in, re-run only
+> if `domain/alert.py`, `observability/styling.py`, or
+> `cli/dev_alert_fixtures.py` have changed in the interim.
 
 Procedure: [`docs/release-checklist.md`](../../release-checklist.md). Test-chat
 setup: [`SETUP.md`](SETUP.md). Reference MarkdownV2 text per variant:

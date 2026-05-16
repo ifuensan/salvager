@@ -61,7 +61,12 @@ def test_version_human_format(runner: CliRunner) -> None:
     assert result.exit_code == 0
     # Human format: "hardware-hunter <semver> (<commit>)"
     assert "hardware-hunter" in result.stdout
-    assert "0.1.0" in result.stdout
+    # The version is read from pyproject.toml at runtime; assert on the
+    # shape (semver MAJOR.MINOR.PATCH) rather than a hard-coded value
+    # so version bumps don't break this test.
+    import re
+
+    assert re.search(r"\b\d+\.\d+\.\d+\b", result.stdout)
 
 
 def test_version_json_format_is_parseable(runner: CliRunner) -> None:
@@ -69,7 +74,11 @@ def test_version_json_format_is_parseable(runner: CliRunner) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout.strip())
     assert set(payload.keys()) == {"version", "commit"}
-    assert payload["version"] == "0.1.0"
+    # Match a semver MAJOR.MINOR.PATCH shape — see test_version_human_format
+    # for why this is a regex match rather than a hard-coded constant.
+    import re
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", payload["version"]) is not None
     assert isinstance(payload["commit"], str)
     assert payload["commit"]  # non-empty
 
