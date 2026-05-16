@@ -1,32 +1,33 @@
-"""Phase 1 Telegram callback handler — Story 3.13.
+"""Telegram callback dispatcher — Stories 3.13 + 5.10.
 
-Wires inbound :class:`CallbackEvent` taps to the three Phase 1 effects:
+Wires inbound :class:`CallbackEvent` taps to the per-verb effects:
 
-  1. Append a row to the ``callbacks`` audit table (NFR-S4 append-only).
-  2. For ``snooze``, mutate ``wishlist_runtime_state.snooze_until`` so
-     the poll loop's snooze filter suppresses further alerts for that
-     ``entry_key`` until the window expires (default 24h).
-  3. Replace the inline keyboard with the locked acknowledgment row
-     ``[✓ visto] / [✓ saltado] / [✓ pospuesto 24h]`` (UX-DR12).
+  - **view** / **skip** / **snooze** (Phase 1, Story 3.13):
+    append a row to the ``callbacks`` audit table, mutate snooze state
+    if applicable, and replace the inline keyboard with the locked
+    acknowledgment row (``[✓ visto] / [✓ saltado] / [✓ pospuesto 24h]``)
+    per UX-DR12.
+  - **buy** (Phase 2, Story 5.10):
+    append the audit row, immediately edit the keyboard to a single
+    non-tappable ``[🟡 Comprando…]`` row (UX-DR11), then fire the
+    :class:`BuyOrchestrator` in the background. The orchestrator
+    dispatches the receipt or failure message as a NEW Telegram message
+    so the original alert's ``🟡 Comprando…`` is preserved as the
+    "what happened" history (per UX-DR17 — no spinner).
 
-The handler is intentionally inert on unknown verbs — including
-``buy`` at v0.x — and on malformed ``callback_data``: it logs the
-event at ``warn`` and returns without editing the keyboard, so the
-operator can retry on a real handler in Phase 2.
-
-The handler is the **orchestration seam**: it depends only on the
-:class:`Store` and :class:`TelegramSurface` ports, never on a
-specific adapter. The poll-loop orchestrator (Story 3.14) will
-register an instance of :class:`CallbackDispatcher` with the live
-:class:`TelegramSurface` via ``listen_callbacks``.
+The dispatcher depends only on the :class:`Store`, :class:`TelegramSurface`
+and :class:`BuyExecutor` ports — never on a specific adapter. The
+poll-loop orchestrator wires it up with the live surface via
+``TelegramSurface.listen_callbacks``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid as uuid_module
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Final
+from typing import Final, Protocol
 from uuid import UUID
 
 from hardware_hunter.domain.alert import CallbackEvent, InlineButton
@@ -35,19 +36,27 @@ from hardware_hunter.interfaces.store import Store
 from hardware_hunter.interfaces.telegram_surface import TelegramSurface
 from hardware_hunter.observability.logging import get_logger
 
-#: Phase 1 verbs this handler dispatches. ``buy`` is intentionally
-#: absent — Phase 2 callbacks landing in v0.x are logged as unknown
-#: and ignored (AR24 guardrail at the surface layer too).
-HANDLED_VERBS: Final[frozenset[str]] = frozenset({"view", "skip", "snooze"})
+#: Verbs the dispatcher acts on. Anything else logs at warn level and
+#: is dropped silently — the surface layer (``TelegramBotSurface``)
+#: should have already filtered, this is defence in depth.
+HANDLED_VERBS: Final[frozenset[str]] = frozenset({"view", "skip", "snooze", "buy"})
 
-#: Acknowledgment-row labels per UX-DR12. Spanish past-participles
-#: match BUTTON_LABELS' present-tense verbs (Ver → visto, Saltar →
-#: saltado, Posponer → pospuesto).
+#: Phase 1 acknowledgment-row labels (UX-DR12). Spanish past-participles
+#: match :data:`BUTTON_LABELS`' present-tense verbs (Ver → visto, Saltar →
+#: saltado, Posponer → pospuesto). ``buy`` is intentionally absent — its
+#: in-flight badge is :data:`BUY_IN_FLIGHT_LABEL`, not an ack row.
 ACK_LABELS: Final[dict[str, str]] = {
     "view": "✓ visto",
     "skip": "✓ saltado",
     "snooze": "✓ pospuesto 24h",
 }
+
+#: The non-tappable in-flight badge shown on the original alert while
+#: the buy orchestrator runs (UX-DR11). The yellow circle is the
+#: locked surface token for "in progress" and the trailing ellipsis is
+#: a U+2026 character (no MarkdownV2 escape concerns — it's the button
+#: text, not the message body).
+BUY_IN_FLIGHT_LABEL: Final[str] = "🟡 Comprando…"
 
 #: Default snooze window. The orchestrator can override via
 #: ``snooze_hours`` to wire ``config.yaml > snooze.default_hours``.
@@ -58,13 +67,27 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class CallbackDispatcher:
-    """Routes Phase 1 callbacks to audit + state + ack-row edit.
+class BuyExecutor(Protocol):
+    """Structural type for "something that can run a Phase 2 buy".
 
-    The dispatcher is owned by orchestration and stateless across
-    callbacks; multiple in-flight taps are safe to interleave because
-    every effect is serialized inside the :class:`Store`
-    implementation's write lock.
+    The dispatcher depends on this Protocol, not on the concrete
+    :class:`BuyOrchestrator`, so unit tests pass a recording fake and
+    the orchestration layer keeps its one-way dependency shape.
+    """
+
+    async def execute_buy_from_callback(self, event: CallbackEvent) -> object: ...
+
+
+class CallbackDispatcher:
+    """Routes Phase 1 + Phase 2 callbacks to audit + state + keyboard edits.
+
+    The dispatcher is stateless across callbacks; multiple in-flight
+    taps are safe to interleave because every effect is serialized
+    inside the :class:`Store` implementation's write lock. For
+    ``buy`` taps the orchestrator runs as a background task — the
+    dispatcher keeps a reference to each task in ``_buy_tasks`` so
+    the asyncio garbage collector doesn't cancel them mid-flight, and
+    drops them as they complete.
     """
 
     def __init__(
@@ -72,33 +95,34 @@ class CallbackDispatcher:
         *,
         store: Store,
         surface: TelegramSurface,
+        buy_orchestrator: BuyExecutor | None = None,
         snooze_hours: int = DEFAULT_SNOOZE_HOURS,
         clock: Callable[[], datetime] = _utc_now,
         new_audit_id: Callable[[], UUID] = uuid_module.uuid4,
     ) -> None:
         self._store = store
         self._surface = surface
+        self._buy_orchestrator = buy_orchestrator
         self._snooze_hours = snooze_hours
         self._clock = clock
         self._new_audit_id = new_audit_id
         self._log = get_logger("orchestration.callback_handler")
+        self._buy_tasks: set[asyncio.Task[object]] = set()
 
     async def handle(self, event: CallbackEvent) -> None:
         """Process a single callback tap end-to-end.
 
-        Ordering: audit row first, then state mutation (snooze only),
-        then keyboard edit. The keyboard edit is last so a delivery
-        failure there doesn't lose the audit trail — the operator
-        sees the tap landed in ``audit show`` even if the visual
-        acknowledgment doesn't arrive.
+        Ordering: audit row first, then any state mutation, then the
+        keyboard edit. The keyboard edit is last so a delivery failure
+        there doesn't lose the audit trail. For ``buy`` the orchestrator
+        is fired *after* the keyboard edit so the operator's "tap
+        registered" badge appears within 1 s of the tap regardless of
+        downstream latency.
         """
         if event.verb not in HANDLED_VERBS:
             self._log.warning(
                 "callback_unknown_verb",
-                extra={
-                    "verb": event.verb,
-                    "callback_data": event.callback_data,
-                },
+                extra={"verb": event.verb, "callback_data": event.callback_data},
             )
             return
 
@@ -124,6 +148,10 @@ class CallbackDispatcher:
             )
         )
 
+        if event.verb == "buy":
+            await self._handle_buy(event, alert_id)
+            return
+
         if event.verb == "snooze":
             await self._apply_snooze(alert_id, now)
 
@@ -131,6 +159,29 @@ class CallbackDispatcher:
             event.message_id,
             _acknowledgment_keyboard(event.verb, alert_id),
         )
+
+    async def _handle_buy(self, event: CallbackEvent, alert_id: UUID) -> None:
+        """Phase 2 buy verb: in-flight badge + fire-and-forget orchestrator."""
+        self._log.info(
+            "phase2_buy_callback_received",
+            extra={"alert_id": str(alert_id), "callback_data": event.callback_data},
+        )
+        await self._surface.edit_keyboard(
+            event.message_id,
+            _in_flight_keyboard(alert_id),
+        )
+        if self._buy_orchestrator is None:
+            # Defence-in-depth — the daemon should always wire an
+            # orchestrator at v1.0, but a misconfigured deploy should
+            # still leave the audit trail + badge in place.
+            self._log.error(
+                "buy_orchestrator_not_wired",
+                extra={"alert_id": str(alert_id)},
+            )
+            return
+        task = asyncio.create_task(self._buy_orchestrator.execute_buy_from_callback(event))
+        self._buy_tasks.add(task)
+        task.add_done_callback(self._buy_tasks.discard)
 
     async def _apply_snooze(self, alert_id: UUID, now: datetime) -> None:
         snapshot = await self._store.get_alert_snapshot_by_alert_id(alert_id)
@@ -192,9 +243,31 @@ def _acknowledgment_keyboard(verb: str, alert_id: UUID) -> list[list[InlineButto
     ]
 
 
+def _in_flight_keyboard(alert_id: UUID) -> list[list[InlineButton]]:
+    """Build the single-row in-flight keyboard shown while the buy
+    orchestrator runs (Story 5.10, UX-DR11).
+
+    Telegram requires a non-empty ``callback_data``; we use
+    ``listing:noop:<alert_id>`` which fits the locked
+    ``<surface>:<verb>:<id>`` format. ``noop`` is outside
+    :data:`HANDLED_VERBS`, so a stray tap is dropped at this
+    dispatcher with a structured-log warning.
+    """
+    return [
+        [
+            InlineButton(
+                text=BUY_IN_FLIGHT_LABEL,
+                callback_data=f"listing:noop:{alert_id}",
+            )
+        ]
+    ]
+
+
 __all__ = [
     "ACK_LABELS",
+    "BUY_IN_FLIGHT_LABEL",
     "DEFAULT_SNOOZE_HOURS",
     "HANDLED_VERBS",
+    "BuyExecutor",
     "CallbackDispatcher",
 ]

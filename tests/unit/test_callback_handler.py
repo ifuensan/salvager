@@ -7,6 +7,7 @@ and the orchestration logic is the only thing under test.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from collections.abc import Awaitable, Callable
@@ -175,15 +176,46 @@ def _fixed_audit_id() -> UUID:
     return _FIXED_AUDIT_ID
 
 
+class _FakeBuyOrchestrator:
+    """Records every ``execute_buy_from_callback`` call.
+
+    The constructor accepts a ``raises`` exception to simulate an
+    orchestrator that explodes inside the background task — the
+    dispatcher must not let that propagate.
+    """
+
+    def __init__(self, *, raises: BaseException | None = None) -> None:
+        self.received_events: list[CallbackEvent] = []
+        self._raises = raises
+        self._done = asyncio.Event()
+
+    async def execute_buy_from_callback(self, event: CallbackEvent) -> object:
+        try:
+            self.received_events.append(event)
+            if self._raises is not None:
+                raise self._raises
+            return "ok"
+        finally:
+            self._done.set()
+
+    async def wait_for_completion(self) -> None:
+        """Yield once so the dispatcher's create_task can advance.
+        Tests call this right after ``await dispatcher.handle(event)``
+        so the assertions see the orchestrator's recorded call."""
+        await self._done.wait()
+
+
 def _make_dispatcher(
     store: _FakeStore,
     surface: _FakeSurface,
     *,
     snooze_hours: int = DEFAULT_SNOOZE_HOURS,
+    buy_orchestrator: _FakeBuyOrchestrator | None = None,
 ) -> CallbackDispatcher:
     return CallbackDispatcher(
         store=store,
         surface=surface,
+        buy_orchestrator=buy_orchestrator,
         snooze_hours=snooze_hours,
         clock=_frozen_clock,
         new_audit_id=_fixed_audit_id,
@@ -340,25 +372,102 @@ async def test_audit_row_written_before_keyboard_edit() -> None:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-async def test_buy_verb_in_v0_is_logged_unknown_and_keyboard_left_alone() -> None:
-    """Phase 2 buy callbacks landing at v0.x are logged and ignored."""
+async def test_buy_verb_is_in_handled_verbs() -> None:
+    assert "buy" in HANDLED_VERBS
+    assert frozenset({"view", "skip", "snooze", "buy"}) == HANDLED_VERBS
+
+
+async def test_buy_verb_edits_keyboard_to_comprando_and_fires_orchestrator() -> None:
+    """Story 5.10: a Buy tap immediately swaps the keyboard for the
+    ``[🟡 Comprando…]`` badge and fires the orchestrator as a
+    background task. The dispatcher returns without awaiting the
+    orchestrator's completion."""
     snapshot = _make_snapshot()
     store = _FakeStore()
     store.snapshots[snapshot.alert_id] = snapshot
     surface = _FakeSurface()
-    dispatcher = _make_dispatcher(store, surface)
+    orchestrator = _FakeBuyOrchestrator()
+    dispatcher = _make_dispatcher(store, surface, buy_orchestrator=orchestrator)
+
+    event = _callback_event(verb="buy", alert_id=snapshot.alert_id)
+    await dispatcher.handle(event)
+    await orchestrator.wait_for_completion()
+
+    # The audit row landed.
+    assert len(store.callbacks) == 1
+    assert store.callbacks[0].verb == "buy"
+    # The keyboard was edited exactly once to the in-flight badge.
+    assert len(surface.edits) == 1
+    message_id, keyboard = surface.edits[0]
+    assert message_id == event.message_id
+    assert keyboard is not None
+    assert len(keyboard) == 1
+    assert len(keyboard[0]) == 1
+    badge = keyboard[0][0]
+    assert badge.text == "🟡 Comprando…"
+    assert badge.callback_data == f"listing:noop:{snapshot.alert_id}"
+    # The orchestrator was fired with the original event.
+    assert orchestrator.received_events == [event]
+
+
+async def test_buy_in_flight_keyboard_callback_data_passes_validator() -> None:
+    """The in-flight badge's callback_data must fit the locked
+    ``<surface>:<verb>:<id>`` format + the 64-byte Telegram cap."""
+    alert_id = uuid4()
+    button = InlineButton(text="🟡 Comprando…", callback_data=f"listing:noop:{alert_id}")
+    assert button.callback_data.encode("utf-8").__len__() <= 64
+
+
+async def test_buy_without_orchestrator_writes_audit_and_badge_but_no_task() -> None:
+    """If the daemon is misconfigured (no buy orchestrator wired), the
+    dispatcher MUST still leave the audit + badge in place — silence
+    is not an option, and the operator can debug from there."""
+    snapshot = _make_snapshot()
+    store = _FakeStore()
+    store.snapshots[snapshot.alert_id] = snapshot
+    surface = _FakeSurface()
+    dispatcher = _make_dispatcher(store, surface, buy_orchestrator=None)
 
     event = _callback_event(verb="buy", alert_id=snapshot.alert_id)
     await dispatcher.handle(event)
 
-    assert store.callbacks == []
-    assert store.snoozes == []
-    assert surface.edits == []
+    assert len(store.callbacks) == 1
+    assert len(surface.edits) == 1
+    assert surface.edits[0][1] is not None  # badge present
+    # No way to assert "no task started"; the absence of an orchestrator
+    # means there is nothing to call. The structured-log message
+    # ``buy_orchestrator_not_wired`` covers the operator-facing breadcrumb.
 
 
-async def test_buy_verb_is_not_in_handled_verbs() -> None:
-    assert "buy" not in HANDLED_VERBS
-    assert frozenset({"view", "skip", "snooze"}) == HANDLED_VERBS
+async def test_buy_emits_phase2_buy_callback_received_log() -> None:
+    """Story 5.10 — the dispatcher logs ``phase2_buy_callback_received``
+    on every Buy tap so operational dashboards can count taps even
+    when the orchestrator is slow / absent."""
+    out = _run_subprocess_logging_handle_buy()
+    records = [json.loads(line) for line in out.splitlines() if line.strip()]
+    received = [r for r in records if r["event"] == "phase2_buy_callback_received"]
+    assert received, f"missing phase2_buy_callback_received in {records!r}"
+    assert received[0]["level"] == "info"
+
+
+async def test_buy_orchestrator_failure_does_not_break_dispatcher() -> None:
+    """The orchestrator runs as a background task — a raise inside it
+    must not propagate to the dispatcher's caller. The badge stays
+    edited; the audit row stays written."""
+    snapshot = _make_snapshot()
+    store = _FakeStore()
+    store.snapshots[snapshot.alert_id] = snapshot
+    surface = _FakeSurface()
+    orchestrator = _FakeBuyOrchestrator(raises=RuntimeError("orchestrator boom"))
+    dispatcher = _make_dispatcher(store, surface, buy_orchestrator=orchestrator)
+
+    event = _callback_event(verb="buy", alert_id=snapshot.alert_id)
+    # The handle() call itself returns cleanly even though the task raises.
+    await dispatcher.handle(event)
+    await orchestrator.wait_for_completion()
+
+    assert len(store.callbacks) == 1
+    assert len(surface.edits) == 1
 
 
 async def test_unhandled_verb_logs_callback_unknown_verb_event() -> None:
@@ -368,7 +477,7 @@ async def test_unhandled_verb_logs_callback_unknown_verb_event() -> None:
     unknown = [r for r in records if r["event"] == "callback_unknown_verb"]
     assert unknown, f"missing callback_unknown_verb in {records!r}"
     assert unknown[0]["level"] == "warn"
-    assert unknown[0]["verb"] == "buy"
+    assert unknown[0]["verb"] == "archive"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -468,6 +577,7 @@ def test_callback_handler_imports_stay_within_orchestration_allowlist() -> None:
         # stdlib
         "__future__",
         "abc",
+        "asyncio",  # Story 5.10 — fire-and-forget orchestrator task
         "collections",
         "dataclasses",
         "datetime",
@@ -534,6 +644,46 @@ def _run_subprocess(snippet: str) -> str:
 
 
 def _run_subprocess_logging_handle_unknown_verb() -> str:
+    """Drive the defence-in-depth unknown-verb path. The :class:`CallbackVerb`
+    Literal blocks ad-hoc verbs at validation; we use ``model_construct``
+    to bypass — the same shape a misbehaving adapter could feed us."""
+    snippet = (
+        "from hardware_hunter.interfaces.store import Store\n"
+        "from hardware_hunter.interfaces.telegram_surface import TelegramSurface\n"
+        "class _S(Store):\n"
+        "    async def is_seen(self, *a, **kw): return False\n"
+        "    async def record_seen(self, *a, **kw): pass\n"
+        "    async def get_snooze_until(self, *a, **kw): return None\n"
+        "    async def set_snooze(self, *a, **kw): pass\n"
+        "    async def record_alert_snapshot(self, *a, **kw): return 1\n"
+        "    async def get_alert_snapshot(self, *a, **kw): return None\n"
+        "    async def get_alert_snapshot_by_alert_id(self, *a, **kw): return None\n"
+        "    async def record_callback(self, *a, **kw): pass\n"
+        "    async def set_meta(self, *a, **kw): pass\n"
+        "    async def get_meta(self, *a, **kw): return None\n"
+        "    async def get_all_meta(self, *a, **kw): return {}\n"
+        "    async def record_tap_event(self, *a, **kw): pass\n"
+        "    async def record_transaction(self, *a, **kw): pass\n"
+        "class _T(TelegramSurface):\n"
+        "    async def send(self, *a, **kw): return 1\n"
+        "    async def edit_keyboard(self, *a, **kw): pass\n"
+        "    async def listen_callbacks(self, *a, **kw): pass\n"
+        "async def main():\n"
+        "    d = CallbackDispatcher(store=_S(), surface=_T())\n"
+        "    e = CallbackEvent.model_construct(\n"
+        "        callback_query_id='cbq-1', chat_id=1, message_id=1,\n"
+        "        callback_data='listing:archive:" + str(uuid4()) + "', verb='archive')\n"
+        "    await d.handle(e)\n"
+        "asyncio.run(main())\n"
+    )
+    return _run_subprocess(snippet)
+
+
+def _run_subprocess_logging_handle_buy() -> str:
+    """Drive the Buy path through a structured-log subprocess so we can
+    assert on the ``phase2_buy_callback_received`` JSON line. No
+    orchestrator is wired — the dispatcher still emits the log and
+    the badge, which is all this test cares about."""
     snippet = (
         "from hardware_hunter.interfaces.store import Store\n"
         "from hardware_hunter.interfaces.telegram_surface import TelegramSurface\n"
