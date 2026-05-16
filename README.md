@@ -56,6 +56,18 @@ docker-compose up -d
 
 The commented-out commands above land in subsequent stories. See [ROADMAP.md](ROADMAP.md) for what's implemented today versus planned.
 
+**Matching the container UID to your host (optional).** As of `v0.2.1` the runtime stage drops to a non-root `salvager` user (UID 1000 by default), so files written to `./data` and `./config` are owned by UID 1000 on the host. If your host user is not UID 1000, rebuild the image with your own UID/GID so volume contents stay writable without `sudo`:
+
+```bash
+docker-compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g)
+```
+
+Operators upgrading from `v0.2.0` (which ran as root) need to reclaim ownership of their existing volume contents once:
+
+```bash
+sudo chown -R $(id -u):$(id -g) ./data ./config
+```
+
 ---
 
 ## Legal disclaimer

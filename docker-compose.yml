@@ -6,6 +6,12 @@
 services:
   salvager:
     image: ghcr.io/ifuensan/salvager:latest
+    # `build:` lets operators rebuild locally with custom APP_UID /
+    # APP_GID build-args; without it `docker-compose build` is a
+    # no-op. When no local build has been done, `docker-compose up -d`
+    # still pulls the pinned image from GHCR as before.
+    build:
+      context: .
     container_name: salvager
     restart: on-failure
     stop_grace_period: 30s
