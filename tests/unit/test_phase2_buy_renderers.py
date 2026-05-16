@@ -223,6 +223,32 @@ def test_screenshot_missing_uses_the_alternate_reassurance() -> None:
 
 
 @pytest.mark.parametrize("reason", list(BuyFailureReason), ids=lambda r: r.value)
+def test_every_variant_has_a_snapshot(
+    reason: BuyFailureReason,
+    snapshot: SnapshotAssertion,
+) -> None:
+    """Story 5.16 AC: one snapshot fixture per ``BuyFailureReason``."""
+    rendered = render_phase2_buy_failure(
+        reason,
+        entry_display_name="WD Red Plus 4TB (WD40EFPX)",
+        ctx={
+            # Generic, variant-spanning ctx; unused fields are silently
+            # ignored by the per-variant detail builders.
+            "api_price": Decimal("53.00"),
+            "html_price": Decimal("0.53"),
+            "tolerance_eur": Decimal("1.00"),
+            "consecutive_failures": 3,
+            "threshold": 3,
+            "missing": ["buy_button"],
+            "error_class": "TinyFishUnavailable",
+            "transaction_id": 42,
+            "receipt_id": "WP-2026-0001",
+        },
+    )
+    assert rendered.text == snapshot
+
+
+@pytest.mark.parametrize("reason", list(BuyFailureReason), ids=lambda r: r.value)
 def test_every_variant_starts_with_locked_severity(reason: BuyFailureReason) -> None:
     rendered = render_phase2_buy_failure(
         reason,

@@ -29,7 +29,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Final, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -110,15 +110,15 @@ def render_report(
     failing: list[tuple[str, float]],
     *,
     threshold_pct: float,
-    stream: object = sys.stdout,
+    stream: TextIO = sys.stdout,
 ) -> None:
-    print(f"Phase 2 critical-path coverage gate (threshold: {threshold_pct:.0f}%)", file=stream)  # type: ignore[arg-type]
+    print(f"Phase 2 critical-path coverage gate (threshold: {threshold_pct:.0f}%)", file=stream)
     for module, pct in passing:
-        print(f"  PASS  {module}  {pct:6.2f}%", file=stream)  # type: ignore[arg-type]
+        print(f"  PASS  {module}  {pct:6.2f}%", file=stream)
     for module in pending:
-        print(f"  PEND  {module}  (not yet in coverage report)", file=stream)  # type: ignore[arg-type]
+        print(f"  PEND  {module}  (not yet in coverage report)", file=stream)
     for module, pct in failing:
-        print(f"  FAIL  {module}  {pct:6.2f}%  (below {threshold_pct:.0f}%)", file=stream)  # type: ignore[arg-type]
+        print(f"  FAIL  {module}  {pct:6.2f}%  (below {threshold_pct:.0f}%)", file=stream)
 
 
 def main(argv: list[str] | None = None) -> int:

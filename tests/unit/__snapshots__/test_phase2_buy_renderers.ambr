@@ -1,4 +1,111 @@
 # serializer version: 1
+# name: test_every_variant_has_a_snapshot[circuit_open]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Circuit breaker abierto
+  \- 3 fallos consecutivos · circuito abierto
+  \- Umbral: 3
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[marketplace_error]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Error en el marketplace
+  \- Detalle: TinyFishUnavailable
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[missing_element]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Elemento esperado no encontrado
+  \- Elementos faltantes: \['buy\_button'\]
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[payment_rail_unavailable]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Raíl de pago no disponible
+  \- Detalle: TinyFishUnavailable
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[reconciliation_tripped]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Reconciliación de precios falló
+  \- Wallapop API: 53,00 €
+  \- Wallapop HTML: 0,53 €
+  \- Tolerancia: 1,00 €
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 1`
+  2\. Revisa el parser HTML antes de reactivar Fase 2 con `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[screenshot_missing]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Captura del recibo no disponible
+  Recibo: `WP-2026-0001`
+  
+  La compra puede haberse completado, pero no se capturó el recibo\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --id 42`
+  2\. `hardware-hunter phase2 reconcile WP-2026-0001`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[timeout]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Timeout durante la compra
+  \- Detalle: TinyFishUnavailable
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
+# name: test_every_variant_has_a_snapshot[ui_check_failed]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Verificación de UI falló
+  \- Elementos faltantes: \['buy\_button'\]
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `hardware-hunter audit show --last 5`
+  2\. `hardware-hunter phase2 enable <entry>`
+  '''
+# ---
 # name: test_failure_circuit_open_snapshot
   '''
   🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
