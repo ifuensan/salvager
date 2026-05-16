@@ -12,6 +12,33 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.2.1] — _pending publish_
+
+Operational patch on top of v0.2.0. No functional changes to the
+poll loop, evaluator, alert renderer, or Phase 2 buy path.
+
+**Fixed**
+
+- Docker image now bakes the build-time git short SHA into
+  `SALVAGER_COMMIT`, so `salvager version` reports the actual commit
+  instead of `unknown` (#1). The release workflow truncates
+  `github.sha` to 7 chars and passes it as a `--build-arg`.
+- Runtime stage of the image now runs as a non-root `salvager` user
+  (UID 1000 by default, overridable at build time via `APP_UID` /
+  `APP_GID` build-args), so files the daemon writes to bind-mounted
+  `./data` and `./config` volumes are no longer owned by `root` on
+  the host (#2). Operators upgrading from v0.2.0 need to
+  `chown -R $(id -u):$(id -g)` their existing volume contents once;
+  see README "Quick start" for the migration snippet.
+
+**Operator-impacting**
+
+- Bind-mounted volume ownership changes from `root:root` to
+  `1000:1000` (or whatever `APP_UID`/`APP_GID` you build with). One-
+  time host-side `chown` documented in README.
+
+---
+
 ## [1.0.0] — _future, gated on production burn-in of v0.2.0_
 
 Tagging `v1.0.0` requires empirical evidence from running v0.2.0
