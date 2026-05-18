@@ -1,29 +1,20 @@
-"""Gemini Flash :class:`ListingEvaluator` — Story 3.9 (FR13-FR17).
+"""Claude Haiku :class:`ListingEvaluator` — NFR-I3 alternate provider.
 
-Pre-flight budget guard
------------------------
-Before calling the model, the evaluator checks ``listing.price_eur``
-against both wishlist ceilings (``max_price_solo`` and
-``max_price_in_device``). If the price strictly exceeds *both*, the
-LLM is not consulted; the evaluator short-circuits to ``confidence=low``
-with a "price exceeds wishlist max" take. This saves an API call per
-out-of-budget listing and satisfies the Story 3.9 AC.
+Mirrors the Gemini Flash adapter line-for-line:
 
-When max_price_in_device is None (container detection disabled per
-FR5), the budget check uses only max_price_solo.
+- Same pre-flight budget guard (no LLM call when price > every ceiling).
+- Same prompt (``domain.prompts.build_evaluation_prompt`` is shared).
+- Same response schema (:class:`ClaudeEvalResponse` is identical to
+  :class:`GeminiEvalResponse` — separate types keep providers
+  independently evolvable).
+- Same JSON extraction (robust to markdown fences / surrounding prose).
+- Same error mapping: 429 / rate-limit → :class:`LlmRateLimited`,
+  everything else → :class:`LlmEvaluationError`.
 
-Response extraction
--------------------
-LLMs sometimes wrap JSON in markdown code fences despite instructions
-not to. :func:`_extract_json_object` finds the outermost ``{...}`` in
-the response body — robust to leading/trailing prose and code fences.
-
-Test seam
----------
-The constructor accepts an injectable :data:`GeminiCallable`
-(``async (str) -> str``). The production default wraps
-``google.genai.Client.aio.models.generate_content`` and translates
-provider-specific rate-limit errors into :class:`LlmRateLimited`.
+The default model is Claude Haiku 4.5 (``claude-haiku-4-5-20251001``).
+Tests inject a :data:`ClaudeCallable` so the SDK never loads in unit
+tests, and so the adapter-discipline lint sees ``anthropic`` used
+exclusively inside this adapter package (NFR-M1).
 """
 
 from __future__ import annotations
@@ -39,7 +30,7 @@ from salvager.adapters._llm_evaluator_shared import (
     exceeds_all_ceilings,
     extract_json_object,
 )
-from salvager.adapters.llm_gemini.schema import GeminiEvalResponse
+from salvager.adapters.llm_claude.schema import ClaudeEvalResponse
 from salvager.domain.errors import LlmEvaluationError, LlmRateLimited
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
@@ -49,34 +40,39 @@ from salvager.interfaces.listing_evaluator import ListingEvaluator
 from salvager.observability.logging import get_logger
 
 #: Take any prompt string, return the model's raw text reply.
-GeminiCallable = Callable[[str], Awaitable[str]]
+ClaudeCallable = Callable[[str], Awaitable[str]]
 
-_DEFAULT_MODEL = "gemini-2.0-flash"
+_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_DEFAULT_MAX_TOKENS = 512
 
 
-class GeminiFlashEvaluator(ListingEvaluator):
-    """LLM-backed match judge — Gemini Flash by default, swappable per NFR-I3."""
+class ClaudeHaikuEvaluator(ListingEvaluator):
+    """LLM-backed match judge — Claude Haiku, alternate to Gemini Flash."""
 
     def __init__(
         self,
         api_key: SecretStr,
         *,
         model: str = _DEFAULT_MODEL,
-        call: GeminiCallable | None = None,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        call: ClaudeCallable | None = None,
     ) -> None:
         self._model = model
-        self._call: GeminiCallable = (
-            call if call is not None else _build_default_call(api_key.get_secret_value(), model)
+        self._max_tokens = max_tokens
+        self._call: ClaudeCallable = (
+            call
+            if call is not None
+            else _build_default_call(api_key.get_secret_value(), model, max_tokens)
         )
-        self._log = get_logger("adapter.llm_gemini")
+        self._log = get_logger("adapter.llm_claude")
 
     async def evaluate(
         self,
         listing: Listing,
         entry: WishlistEntry,
     ) -> ListingEvaluation:
-        # Pre-flight budget guard — no LLM call when the listing's price
-        # exceeds every configured ceiling.
+        # Pre-flight budget guard — no LLM call when the listing's
+        # price exceeds every configured ceiling.
         if exceeds_all_ceilings(listing, entry):
             return budget_short_circuit_evaluation(listing, entry)
 
@@ -85,7 +81,7 @@ class GeminiFlashEvaluator(ListingEvaluator):
 
         try:
             json_blob = extract_json_object(raw)
-            parsed = GeminiEvalResponse.model_validate_json(json_blob)
+            parsed = ClaudeEvalResponse.model_validate_json(json_blob)
         except (ValidationError, ValueError) as exc:
             self._log.error(
                 "llm_eval_failed",
@@ -95,7 +91,7 @@ class GeminiFlashEvaluator(ListingEvaluator):
                     "marketplace": listing.marketplace,
                 },
             )
-            raise LlmEvaluationError(f"malformed Gemini response: {raw[:200]}") from exc
+            raise LlmEvaluationError(f"malformed Claude response: {raw[:200]}") from exc
 
         if len(parsed.one_line_take) > MAX_ONE_LINE_TAKE:
             raise LlmEvaluationError(
@@ -116,36 +112,53 @@ class GeminiFlashEvaluator(ListingEvaluator):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Default callable — wraps google.genai
+# Default callable — wraps anthropic.AsyncAnthropic
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _build_default_call(api_key: str, model: str) -> GeminiCallable:
-    """Construct the production ``GeminiCallable`` backed by google.genai.
+def _build_default_call(api_key: str, model: str, max_tokens: int) -> ClaudeCallable:
+    """Construct the production ``ClaudeCallable`` backed by anthropic.
 
     Imports happen lazily so tests that inject their own ``call`` don't
     pull the SDK at import time — and so the adapter-discipline lint
-    sees google.genai used exclusively inside this adapter package.
+    sees ``anthropic`` used exclusively inside this adapter package
+    (NFR-M1).
     """
     # Imports kept inside the factory:
     # - keeps the SDK out of the module-level import graph for tests
     # - matches NFR-I3 (provider-swappable) by making the SDK a runtime
     #   dependency of this specific adapter only.
-    from google import genai
-    from google.genai import errors as genai_errors
+    import anthropic
 
-    client = genai.Client(api_key=api_key)
+    client = anthropic.AsyncAnthropic(api_key=api_key)
 
     async def _call(prompt: str) -> str:
         try:
-            response = await client.aio.models.generate_content(
+            response = await client.messages.create(
                 model=model,
-                contents=prompt,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
             )
-        except genai_errors.APIError as exc:
-            if getattr(exc, "code", None) == 429 or "rate" in str(exc).lower():
+        except anthropic.RateLimitError as exc:
+            raise LlmRateLimited(str(exc)) from exc
+        except anthropic.APIStatusError as exc:
+            # Some 429s arrive as generic APIStatusError depending on
+            # the SDK version; treat any status_code == 429 as rate
+            # limit for parity with the Gemini adapter.
+            if getattr(exc, "status_code", None) == 429:
                 raise LlmRateLimited(str(exc)) from exc
-            raise LlmEvaluationError(f"Gemini API error: {exc}") from exc
-        return response.text or ""
+            raise LlmEvaluationError(f"Claude API error: {exc}") from exc
+        except anthropic.APIError as exc:
+            raise LlmEvaluationError(f"Claude API error: {exc}") from exc
+
+        # Anthropic response: .content is a list of ContentBlock; for
+        # plain text replies the first block has .text. Concatenate
+        # all text blocks defensively.
+        text_parts: list[str] = []
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                text_parts.append(text)
+        return "".join(text_parts)
 
     return _call

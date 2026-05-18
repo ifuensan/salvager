@@ -71,6 +71,7 @@ def test_valid_env_loads_all_required_fields(env_file: Path) -> None:
     assert settings.TELEGRAM_CHAT_ID == 12345
     assert isinstance(settings.TELEGRAM_BOT_TOKEN, SecretStr)
     assert settings.TELEGRAM_BOT_TOKEN.get_secret_value() == "secret-bot-token"
+    assert settings.GEMINI_API_KEY is not None
     assert settings.GEMINI_API_KEY.get_secret_value() == "secret-gemini"
 
 
@@ -161,8 +162,11 @@ def test_load_env_or_exit_renders_locked_template_on_missing_var(
     assert "missing required env var:" in captured.err
     assert "see .env.example" in captured.err
     # Names the first missing var, not all of them — operators fix one
-    # at a time.
-    assert "GEMINI_API_KEY" in captured.err
+    # at a time. GEMINI_API_KEY became optional when the Claude adapter
+    # landed (NFR-I3: provider-specific keys are validated by the
+    # composer at compose time, not by the env schema), so the first
+    # missing-required field is now EBAY_APP_ID.
+    assert "EBAY_APP_ID" in captured.err
 
 
 def test_load_env_or_exit_returns_settings_on_success(env_file: Path) -> None:

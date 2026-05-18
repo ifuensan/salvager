@@ -124,7 +124,7 @@ def _patch_evaluator(
             return None
 
     monkeypatch.setattr(explain_cmd, "SqliteLlmEvalCache", lambda *a, **kw: _NoopCache())
-    monkeypatch.setattr(explain_cmd, "GeminiFlashEvaluator", lambda *a, **kw: object())
+    monkeypatch.setattr(explain_cmd, "build_inner_evaluator", lambda *a, **kw: object())
     monkeypatch.setattr(explain_cmd, "CachingListingEvaluator", lambda *a, **kw: _FakeEvaluator())
     return calls
 

@@ -56,8 +56,14 @@ class EnvSettings(BaseSettings):
     TELEGRAM_BOT_TOKEN: SecretStr
     TELEGRAM_CHAT_ID: int
 
-    # LLM provider — default Gemini Flash; swappable via NFR-I3.
-    GEMINI_API_KEY: SecretStr
+    # LLM provider keys — each one required only when its matching
+    # ``llm.provider`` is selected in ``config.yaml``. The composer
+    # factory raises a clear error at startup if the configured
+    # provider's key is missing (see :func:`build_inner_evaluator`).
+    # Both are Optional so a claude-haiku-only deployment doesn't
+    # need a placeholder GEMINI_API_KEY and vice versa (NFR-I3).
+    GEMINI_API_KEY: SecretStr | None = None
+    ANTHROPIC_API_KEY: SecretStr | None = None
 
     # eBay developer credentials — OAuth bootstrapping via `login ebay`.
     EBAY_APP_ID: SecretStr
@@ -113,6 +119,7 @@ def log_env_loaded(settings: EnvSettings) -> None:
                     "TELEGRAM_BOT_TOKEN": settings.TELEGRAM_BOT_TOKEN,
                     "TELEGRAM_CHAT_ID": settings.TELEGRAM_CHAT_ID,
                     "GEMINI_API_KEY": settings.GEMINI_API_KEY,
+                    "ANTHROPIC_API_KEY": settings.ANTHROPIC_API_KEY,
                     "EBAY_APP_ID": settings.EBAY_APP_ID,
                     "EBAY_CERT_ID": settings.EBAY_CERT_ID,
                     "EBAY_DEV_ID": settings.EBAY_DEV_ID,

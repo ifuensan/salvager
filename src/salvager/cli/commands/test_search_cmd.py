@@ -29,7 +29,6 @@ from salvager.adapters.llm_cache_sqlite.cache import (
     CachingListingEvaluator,
     SqliteLlmEvalCache,
 )
-from salvager.adapters.llm_gemini.evaluator import GeminiFlashEvaluator
 from salvager.adapters.wallapop_api.fetcher import WallapopApiFetcher
 from salvager.config.config_yaml import ConfigModel
 from salvager.config.env import EnvSettings
@@ -44,6 +43,7 @@ from salvager.observability.styling import print_table as _print_table
 from salvager.orchestration.composer import (
     EBAY_OAUTH_TOKENS_RELPATH,
     WALLAPOP_COOKIES_RELPATH,
+    build_inner_evaluator,
 )
 
 _MARKETPLACES: tuple[Marketplace, ...] = ("wallapop", "ebay")
@@ -191,7 +191,7 @@ async def _search_all(
     if evaluate and entry is not None:
         cache = SqliteLlmEvalCache(data_dir / DEFAULT_CACHE_FILENAME)
         evaluator = CachingListingEvaluator(
-            GeminiFlashEvaluator(api_key=env.GEMINI_API_KEY), cache, PROMPT_VERSION
+            build_inner_evaluator(env, config), cache, PROMPT_VERSION
         )
     elif evaluate and entry is None:
         outcome.notes.append(
@@ -259,7 +259,7 @@ async def _search_one(
                 result.one_line_take = evaluation.one_line_take
             except LlmRateLimited:
                 outcome.rate_limited = True
-                outcome.notes.append("gemini: rate limited — evaluation skipped for some results")
+                outcome.notes.append("llm: rate limited — evaluation skipped for some results")
         outcome.results.append(result)
 
 

@@ -33,7 +33,6 @@ from salvager.adapters.llm_cache_sqlite.cache import (
     CachingListingEvaluator,
     SqliteLlmEvalCache,
 )
-from salvager.adapters.llm_gemini.evaluator import GeminiFlashEvaluator
 from salvager.adapters.wallapop_api.fetcher import WallapopApiFetcher
 from salvager.config.config_yaml import ConfigModel
 from salvager.config.env import EnvSettings
@@ -49,6 +48,7 @@ from salvager.observability.styling import print_panel, render_prose
 from salvager.orchestration.composer import (
     EBAY_OAUTH_TOKENS_RELPATH,
     WALLAPOP_COOKIES_RELPATH,
+    build_inner_evaluator,
 )
 
 #: Confidence ordering — mirrors the poll loop's threshold gate.
@@ -157,7 +157,7 @@ async def _explain(
 
     cache = SqliteLlmEvalCache(data_dir / DEFAULT_CACHE_FILENAME)
     evaluator: ListingEvaluator = CachingListingEvaluator(
-        GeminiFlashEvaluator(api_key=env.GEMINI_API_KEY), cache, PROMPT_VERSION
+        build_inner_evaluator(env, config), cache, PROMPT_VERSION
     )
     try:
         results = [await _evaluate(listing, entry, evaluator) for entry in entries]
