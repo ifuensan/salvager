@@ -47,9 +47,15 @@ class _FakeContext:
 
 def test_has_session_cookie_true_only_for_known_names_with_values() -> None:
     assert _has_session_cookie([{"name": "accessToken", "value": "x"}])
-    assert _has_session_cookie([{"name": "MPID", "value": "x"}])
+    assert _has_session_cookie([{"name": "__Secure-next-auth.session-token", "value": "x"}])
     # Known name but empty value → not logged in yet.
     assert not _has_session_cookie([{"name": "accessToken", "value": ""}])
+    # Pre-login cookies that Wallapop sets the moment the operator
+    # opens /login (analytics / fingerprinting / consent banner /
+    # NextAuth CSRF). The polling loop must NOT match on these or
+    # it declares success before any credentials are entered.
+    for stray in ("device_id", "MPID", "__cmpconsent94992", "__Host-next-auth.csrf-token"):
+        assert not _has_session_cookie([{"name": stray, "value": "x"}])
     # Unknown cookie name → ignored.
     assert not _has_session_cookie([{"name": "csrftoken", "value": "x"}])
     assert not _has_session_cookie([])

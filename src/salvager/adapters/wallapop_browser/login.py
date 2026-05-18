@@ -29,9 +29,25 @@ _POLL_INTERVAL_S: Final[float] = 1.0
 
 #: Cookie names that, once set with a non-empty value, prove the browser
 #: holds an authenticated Wallapop session. Polling stops as soon as ANY
-#: of these is observed. Ordered most → least likely so the membership
-#: check short-circuits on the common case.
-_SESSION_COOKIE_NAMES: Final[tuple[str, ...]] = ("accessToken", "MPID", "device_id")
+#: of these is observed.
+#:
+#: ``device_id`` and ``MPID`` were here originally but Wallapop sets
+#: ``device_id`` (and the MPID variant) the instant the operator opens
+#: ``/login`` — *before* credentials are entered — for anonymous
+#: fingerprinting. The polling loop matched on the first poll and
+#: declared "logged in" with a useless cookie jar (no auth value at
+#: all). Verified empirically 2026-05-18 on a fresh Chromium context:
+#: ``device_id`` appears alongside consent / analytics / NextAuth
+#: pre-login cookies, never alongside an actual session token.
+#:
+#: ``accessToken`` is Wallapop's own session cookie set on the API
+#: login flow; ``__Secure-next-auth.session-token`` is the cookie
+#: NextAuth sets when login completes through its SSO callback. One
+#: of the two appears post-login depending on the path.
+_SESSION_COOKIE_NAMES: Final[tuple[str, ...]] = (
+    "accessToken",
+    "__Secure-next-auth.session-token",
+)
 
 #: The shape Playwright reports per cookie:
 #: ``{"name", "value", "domain", "path", "secure", "expires", ...}``.
