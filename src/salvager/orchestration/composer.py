@@ -353,5 +353,6 @@ __all__ = [
     "WALLAPOP_COOKIES_RELPATH",
     "ComposedDaemon",
     "NoMarketplacesEnabledError",
+    "build_inner_evaluator",
     "compose_daemon",
 ]
