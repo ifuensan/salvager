@@ -269,7 +269,7 @@ def test_evaluate_flag_runs_the_llm(
         "CachingListingEvaluator",
         lambda *a, **kw: _FakeEvaluator(),
     )
-    monkeypatch.setattr(test_search_cmd, "GeminiFlashEvaluator", lambda *a, **kw: object())
+    monkeypatch.setattr(test_search_cmd, "build_inner_evaluator", lambda *a, **kw: object())
 
     code = _run(tmp_path, marketplace="wallapop", evaluate=True)
     assert code == 0

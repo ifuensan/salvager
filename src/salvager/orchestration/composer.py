@@ -42,6 +42,7 @@ from salvager.adapters.llm_cache_sqlite.cache import (
     CachingListingEvaluator,
     SqliteLlmEvalCache,
 )
+from salvager.adapters.llm_claude.evaluator import ClaudeHaikuEvaluator
 from salvager.adapters.llm_gemini.evaluator import GeminiFlashEvaluator
 from salvager.adapters.sqlite_store.connection import open_connection
 from salvager.adapters.sqlite_store.migrations import (
@@ -59,6 +60,7 @@ from salvager.config.env import EnvSettings
 from salvager.config.wishlist_yaml import load_wishlist
 from salvager.domain.prompts import PROMPT_VERSION
 from salvager.domain.wishlist import Wishlist
+from salvager.interfaces.listing_evaluator import ListingEvaluator
 from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.interfaces.scheduler import Scheduler
 from salvager.observability.logging import get_logger
@@ -202,13 +204,42 @@ def _build_store(data_dir: Path) -> SqliteStore:
     return SqliteStore(db_path)
 
 
+def build_inner_evaluator(env: EnvSettings, config: ConfigModel) -> ListingEvaluator:
+    """Construct the concrete :class:`ListingEvaluator` for ``config.llm.provider``.
+
+    Shared by :func:`_build_evaluator` and the ``test-search`` /
+    ``explain`` CLI commands so the provider dispatch lives in one
+    place (NFR-I3).
+
+    Raises ``ValueError`` if the selected provider's API key is missing
+    from the environment, or the provider literal slipped past the
+    ``LLMProvider`` schema check (defensive — should not happen at
+    runtime).
+    """
+    provider = config.llm.provider
+    if provider == "gemini-flash":
+        return GeminiFlashEvaluator(api_key=env.GEMINI_API_KEY)
+    if provider == "claude-haiku":
+        if env.ANTHROPIC_API_KEY is None:
+            raise ValueError(
+                "llm.provider=claude-haiku selected but ANTHROPIC_API_KEY is not set in .env"
+            )
+        return ClaudeHaikuEvaluator(api_key=env.ANTHROPIC_API_KEY)
+    if provider == "gpt-4o-mini":
+        raise NotImplementedError(
+            "llm.provider=gpt-4o-mini selected but the OpenAI adapter has not been built yet "
+            "(see interfaces/listing_evaluator.py). Pick 'gemini-flash' or 'claude-haiku'."
+        )
+    raise ValueError(f"unknown llm.provider={provider!r}")
+
+
 def _build_evaluator(
     env: EnvSettings,
     config: ConfigModel,
     data_dir: Path,
 ) -> tuple[SqliteLlmEvalCache, CachingListingEvaluator]:
-    """Build the Gemini evaluator and wrap it in the SQLite cache."""
-    inner = GeminiFlashEvaluator(api_key=env.GEMINI_API_KEY)
+    """Build the configured evaluator and wrap it in the SQLite cache."""
+    inner = build_inner_evaluator(env, config)
     cache = SqliteLlmEvalCache(
         data_dir / DEFAULT_CACHE_FILENAME,
         ttl_normal=_hours(config.llm.cache_ttl_hours),
