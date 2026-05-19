@@ -391,6 +391,13 @@ class _RefreshingSession:
         # `salvager login wallapop` runs doesn't crash at import.
         self._jar: Any = None  # httpx.Cookies; typed loose to avoid module-level import
         self._cookies: dict[str, str] | None = None
+        #: mtime captured the last time we loaded (or wrote) cookies. Used
+        #: to spot operator re-logins: ``WallapopFallbackFetcher`` watches
+        #: the same mtime to flip the API path back on after expiry, and
+        #: without this re-read the in-memory jar would still hold the
+        #: stale (refresh-token-already-revoked) cookies — the daemon
+        #: would 401-loop until a process restart.
+        self._cookie_file_mtime: float | None = None
         # Serializes the 401 refresh dance so concurrent search()/fetch()
         # calls don't fire two federated-session refreshes in parallel
         # and clobber each other's rotated cookies.
@@ -398,10 +405,33 @@ class _RefreshingSession:
         self._log = get_logger("adapter.wallapop_api")
 
     def _ensure_cookies_loaded(self) -> dict[str, str]:
-        if self._cookies is None:
+        if self._cookies is None or self._disk_is_newer():
             self._jar = load_cookies(self._cookies_path)
             self._cookies = {c.name: c.value for c in self._jar.jar}
+            self._cookie_file_mtime = self._current_mtime()
         return self._cookies
+
+    def _current_mtime(self) -> float | None:
+        try:
+            return self._cookies_path.stat().st_mtime
+        except OSError:
+            # File transiently missing (e.g., mid-rename). Skip the
+            # snapshot rather than crash; next call will retry.
+            return None
+
+    def _disk_is_newer(self) -> bool:
+        """Has ``cookies.txt`` been rewritten since our last load?
+
+        Catches operator re-logins (``salvager login wallapop`` writes a
+        fresh file with a newer mtime); the in-process refresh-dance
+        write also bumps the snapshot inline so it doesn't trip this.
+        """
+        if self._cookie_file_mtime is None:
+            return False
+        current = self._current_mtime()
+        if current is None:
+            return False
+        return current > self._cookie_file_mtime
 
     async def call(self, path: str, params: dict[str, str]) -> WallapopResponse:
         cookies = self._ensure_cookies_loaded()
@@ -510,13 +540,16 @@ class _RefreshingSession:
         # In-memory update.
         self._cookies = {**self._cookies, **rotated}
         # Disk update — best-effort. If this fails we still benefit
-        # in-memory for the rest of this process.
+        # in-memory for the rest of this process. Snapshot the new
+        # mtime so the next ``_ensure_cookies_loaded`` doesn't re-read
+        # what we just wrote ourselves.
         try:
             write_cookies(
                 self._cookies_path,
                 name_value_pairs=self._cookies,
                 template_jar=self._jar,
             )
+            self._cookie_file_mtime = self._current_mtime()
         except Exception as exc:
             self._log.warning(
                 "wallapop_session_refresh_persist_failed",
