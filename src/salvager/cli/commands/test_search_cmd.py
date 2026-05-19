@@ -275,7 +275,11 @@ def _build_fetcher(
         cookies_path = data_dir / WALLAPOP_COOKIES_RELPATH
         if not cookies_path.exists():
             return None
-        return WallapopApiFetcher(cookies_path=cookies_path)
+        return WallapopApiFetcher(
+            cookies_path=cookies_path,
+            latitude=config.wallapop.latitude,
+            longitude=config.wallapop.longitude,
+        )
     # eBay
     tokens_path = data_dir / EBAY_OAUTH_TOKENS_RELPATH
     if not tokens_path.exists():

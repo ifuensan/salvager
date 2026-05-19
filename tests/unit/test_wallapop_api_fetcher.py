@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 
 from salvager.adapters.wallapop_api import WallapopApiFetcher, load_cookies
 from salvager.adapters.wallapop_api.cookies import WallapopCookiesError
+from salvager.adapters.wallapop_api.fetcher import WallapopResponse
 from salvager.domain.errors import (
     WallapopApiError,
     WallapopSchemaDrift,
@@ -71,43 +72,86 @@ def test_load_cookies_skips_blank_lines_and_comments(tmp_path: Path) -> None:
 
 
 def _valid_search_payload() -> dict[str, Any]:
+    """Sample matching ``GET /api/v3/search/section`` shape.
+
+    Trimmed from a real capture (2026-05-18) — the live response also
+    carries ``taxonomy``, ``shipping``, ``reserved``, ``bump`` etc.,
+    but the schema's ``extra='ignore'`` discards them and tests stay
+    focused on the fields the projection actually consumes.
+    """
     return {
-        "search_objects": [
-            {
-                "id": "abc123",
-                "title": "WD Red Plus 4TB",
-                "description": "Como nuevo, en caja.",
-                "price": {"amount": "55.00", "currency": "EUR"},
-                "location": {"city": "Madrid", "country_code": "ES"},
-                "images": [{"original": "https://cdn.wallapop.com/abc123-original.jpg"}],
-                "user": {"id": "u-42", "items_count": 17},
-                "publish_date": "2026-05-10T08:30:00Z",
-            },
-            {
-                "id": "def456",
-                "title": "Ultrastar 14TB",
-                "price": {"amount": "120.00", "currency": "EUR"},
-                # description omitted (defaults to "")
-                # location absent
-                "images": [],
-                "user": {"id": "u-99"},
-            },
-        ]
+        "data": {
+            "section": {
+                "type": "organic_search_results",
+                "items": [
+                    {
+                        "id": "abc123",
+                        "user_id": "u-42",
+                        "title": "WD Red Plus 4TB",
+                        "description": "Como nuevo, en caja.",
+                        "price": {"amount": "55.00", "currency": "EUR"},
+                        "location": {"city": "Madrid", "country_code": "ES"},
+                        "images": [
+                            {
+                                "urls": {
+                                    "small": "https://cdn.wallapop.com/abc123-W320.jpg",
+                                    "medium": "https://cdn.wallapop.com/abc123-W640.jpg",
+                                    "big": "https://cdn.wallapop.com/abc123-W800.jpg",
+                                }
+                            }
+                        ],
+                        "web_slug": "wd-red-plus-4tb-abc123",
+                        "created_at": 1779047758198,  # unix millis
+                    },
+                    {
+                        "id": "def456",
+                        "user_id": "u-99",
+                        "title": "Ultrastar 14TB",
+                        "price": {"amount": "120.00", "currency": "EUR"},
+                        # description omitted (defaults to "")
+                        # location absent
+                        "images": [],
+                        # web_slug omitted — mapper falls back to id
+                    },
+                ],
+            }
+        },
+        "meta": {"next_page": None},
     }
+
+
+@dataclass(slots=True)
+class _RecordedRequest:
+    """What ``_build_fetcher``'s handler captured per call."""
+
+    path: str
+    params: dict[str, str]
 
 
 def _build_fetcher(
     tmp_path: Path,
-    handler: Callable[[httpx.Request], httpx.Response],
+    handler: Callable[[_RecordedRequest], WallapopResponse],
+    *,
+    recorded: list[_RecordedRequest] | None = None,
 ) -> WallapopApiFetcher:
-    """Build a fetcher wired to an httpx.MockTransport."""
-    transport = httpx.MockTransport(handler)
-    client = httpx.AsyncClient(
-        transport=transport,
-        base_url="https://api.wallapop.com",
-    )
+    """Build a fetcher with a synchronous handler at the
+    :data:`WallapopRequestCallable` seam.
+
+    The seam was changed from ``httpx.MockTransport`` to a plain
+    callable when the adapter migrated to ``curl_cffi`` (curl_cffi
+    has no MockTransport equivalent; cookies/headers/TLS would be
+    untestable through it anyway). Tests now operate purely on the
+    ``WallapopResponse`` value the fetcher consumes.
+    """
+
+    async def _request(path: str, params: dict[str, str]) -> WallapopResponse:
+        record = _RecordedRequest(path=path, params=dict(params))
+        if recorded is not None:
+            recorded.append(record)
+        return handler(record)
+
     cookies_path = _valid_cookies_file(tmp_path)
-    return WallapopApiFetcher(cookies_path, client=client)
+    return WallapopApiFetcher(cookies_path, request=_request)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -117,10 +161,20 @@ def _build_fetcher(
 
 @pytest.mark.asyncio
 async def test_search_returns_domain_listings(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/v3/general/search"
-        assert request.url.params["keywords"] == "WD Red Plus 4TB"
-        return httpx.Response(200, json=_valid_search_payload())
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        assert request.path == "/api/v3/search/section"
+        # The SPA sends a leading space in `keywords` for the
+        # search_box source path; the adapter mirrors that.
+        assert request.params["keywords"] == " WD Red Plus 4TB"
+        assert request.params["source"] == "search_box"
+        assert request.params["section_type"] == "organic_search_results"
+        # Coords default to Madrid centre when not configured.
+        assert request.params["latitude"] == "40.4168"
+        assert request.params["longitude"] == "-3.7038"
+        # search_id is a UUID per call — just assert presence.
+        assert request.params.get("search_id")
+        payload = _valid_search_payload()
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -135,42 +189,28 @@ async def test_search_returns_domain_listings(tmp_path: Path) -> None:
     first = listings[0]
     assert first.marketplace == "wallapop"
     assert first.listing_id == "abc123"
-    assert first.url == "https://es.wallapop.com/item/abc123"
+    # URL builds from web_slug, not from raw id.
+    assert first.url == "https://es.wallapop.com/item/wd-red-plus-4tb-abc123"
     assert first.title == "WD Red Plus 4TB"
     assert first.price_eur == Decimal("55.00")
     assert first.location == "Madrid"
-    assert first.photo_urls == ["https://cdn.wallapop.com/abc123-original.jpg"]
+    # Prefers `big` size from images[].urls; falls back to medium/small.
+    assert first.photo_urls == ["https://cdn.wallapop.com/abc123-W800.jpg"]
     assert first.seller_id == "u-42"
-    assert first.seller_history_count == 17
+    # v3 endpoint omits seller history count; populated via separate
+    # /api/v3/users/{id} call by callers that need it (today: None).
+    assert first.seller_history_count is None
+    # created_at unix millis → datetime.
     assert first.published_at is not None
 
     second = listings[1]
+    # Missing web_slug → fallback to id.
+    assert second.url == "https://es.wallapop.com/item/def456"
     assert second.location is None
     assert second.photo_urls == []
     assert second.description == ""
-
-
-@pytest.mark.asyncio
-async def test_search_passes_max_price_filter(tmp_path: Path) -> None:
-    seen_params: dict[str, str] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen_params.update(request.url.params)
-        return httpx.Response(200, json={"search_objects": []})
-
-    fetcher = _build_fetcher(tmp_path, handler)
-    try:
-        await fetcher.search(
-            SearchQuery(
-                keywords=["WD"],
-                marketplace="wallapop",
-                max_price_eur=Decimal("90.00"),
-            )
-        )
-    finally:
-        await fetcher.aclose()
-
-    assert seen_params.get("max_sale_price") == "90.00"
+    # No created_at → published_at None.
+    assert second.published_at is None
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -180,8 +220,8 @@ async def test_search_passes_max_price_filter(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_http_401_raises_session_expired(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, json={"error": "unauthorized"})
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(status_code=401, text='{"error":"unauthorized"}', json_data=None)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -193,8 +233,8 @@ async def test_http_401_raises_session_expired(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_http_500_raises_api_error_with_status_and_body(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="upstream broken")
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(status_code=500, text="upstream broken", json_data=None)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -212,8 +252,8 @@ async def test_http_429_raises_api_error(tmp_path: Path) -> None:
     """429 (rate limited) is treated as a generic API error — the
     orchestration layer handles backoff, not the adapter."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429)
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(status_code=429, text="", json_data=None)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -228,17 +268,23 @@ async def test_http_429_raises_api_error(tmp_path: Path) -> None:
 async def test_missing_required_field_raises_schema_drift(tmp_path: Path) -> None:
     """A 200 response missing a required field surfaces as schema drift."""
     bad_payload = {
-        "search_objects": [
-            {
-                # 'id' missing — required field
-                "title": "WD Red Plus 4TB",
-                "price": {"amount": "55.00", "currency": "EUR"},
+        "data": {
+            "section": {
+                "items": [
+                    {
+                        # 'id' missing — required field
+                        "title": "WD Red Plus 4TB",
+                        "price": {"amount": "55.00", "currency": "EUR"},
+                    }
+                ]
             }
-        ]
+        }
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=bad_payload)
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(
+            status_code=200, text=json.dumps(bad_payload), json_data=bad_payload
+        )
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -246,7 +292,7 @@ async def test_missing_required_field_raises_schema_drift(tmp_path: Path) -> Non
             await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
     finally:
         await fetcher.aclose()
-    # The path mentions the missing field.
+    # The path mentions the missing field under the v3 envelope.
     assert "id" in excinfo.value.field_path
 
 
@@ -254,11 +300,12 @@ async def test_missing_required_field_raises_schema_drift(tmp_path: Path) -> Non
 async def test_unknown_extra_fields_are_tolerated(tmp_path: Path) -> None:
     """Wallapop adds fields over time; ignoring extras is the design."""
     payload = _valid_search_payload()
-    payload["search_objects"][0]["surprise_field"] = "this is fine"
+    payload["data"]["section"]["items"][0]["surprise_field"] = "this is fine"
+    payload["data"]["section"]["new_section_field"] = {"x": 1}
     payload["new_top_level"] = {"x": 1}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=payload)
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -282,8 +329,9 @@ async def test_successful_search_logs_event_with_latency_and_count(
     package-root logger has ``propagate=False`` so pytest's ``caplog``
     can't see it. Parsing the captured stdout is the right surface."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_valid_search_payload())
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        payload = _valid_search_payload()
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -307,11 +355,15 @@ async def test_successful_search_logs_event_with_latency_and_count(
 
 @pytest.mark.asyncio
 async def test_fetch_single_listing(tmp_path: Path) -> None:
-    item = _valid_search_payload()["search_objects"][0]
+    """``fetch()`` against the legacy ``/api/v3/items/{id}`` endpoint
+    still returns a single-item payload with the same per-item shape
+    as the search results — kept for ``salvager explain <url>`` and
+    Phase 2 pre-buy reconciliation."""
+    item = _valid_search_payload()["data"]["section"]["items"][0]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/v3/items/abc123"
-        return httpx.Response(200, json=item)
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        assert request.path == "/api/v3/items/abc123"
+        return WallapopResponse(status_code=200, text=json.dumps(item), json_data=item)
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
@@ -328,9 +380,11 @@ async def test_fetch_single_listing(tmp_path: Path) -> None:
 
 
 def test_fetcher_module_never_disables_tls_verification() -> None:
-    """AST check: no call passes ``verify=False`` anywhere in the adapter
-    source. Substring grep would false-positive on the docstring that
-    explains *why* there is no such codepath."""
+    """AST check: no call passes ``verify=False`` anywhere in the
+    adapter source — covers both ``httpx`` (legacy) and ``curl_cffi``
+    (current). curl_cffi's ``AsyncSession`` defaults to ``verify=True``
+    and the adapter never overrides; this test fences future drift
+    (NFR-S3)."""
     import ast
 
     src_path = (

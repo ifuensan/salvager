@@ -90,6 +90,19 @@ class EbayConfig(BaseModel):
     daily_request_quota: Annotated[int, Field(ge=1)] = 5000
 
 
+class WallapopConfig(BaseModel):
+    """Wallapop-specific knobs. ``latitude`` / ``longitude`` are
+    required by the v3 ``/api/v3/search/section`` endpoint — the
+    SPA passes the operator's browser geolocation. We default to
+    Madrid centre (40.4168, -3.7038); operators who care about
+    proximity ranking should set their own."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: Annotated[float, Field(ge=-90.0, le=90.0)] = 40.4168
+    longitude: Annotated[float, Field(ge=-180.0, le=180.0)] = -3.7038
+
+
 class LoggingConfig(BaseModel):
     """Structured-log threshold (NFR-O1, NFR-O4)."""
 
@@ -135,6 +148,7 @@ class ConfigModel(BaseModel):
     phase2: Phase2Config = Field(default_factory=Phase2Config)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     ebay: EbayConfig = Field(default_factory=EbayConfig)
+    wallapop: WallapopConfig = Field(default_factory=WallapopConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)

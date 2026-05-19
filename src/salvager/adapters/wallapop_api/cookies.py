@@ -60,3 +60,45 @@ def load_cookies(path: str | Path) -> httpx.Cookies:
         domain, _include_subs, cookie_path_field, _secure, _expiry, name, value = fields
         jar.set(name, value, domain=domain, path=cookie_path_field)
     return jar
+
+
+def write_cookies(
+    path: str | Path,
+    *,
+    name_value_pairs: dict[str, str],
+    template_jar: httpx.Cookies,
+) -> None:
+    """Persist refreshed cookies to a Netscape ``cookies.txt`` file
+    atomically (write-temp + rename), preserving 0600 mode.
+
+    Used by the ``wallapop_api`` fetcher after a transparent token
+    refresh via ``/api/auth/federated-session``: NextAuth rotates
+    ``accessToken`` + ``__Secure-next-auth.session-token`` every few
+    minutes, and writing the new values back lets the next process
+    invocation start with fresh tokens (vs. always 401-ing and
+    refreshing on the first request).
+
+    ``template_jar`` provides the domain / path metadata to write
+    alongside each cookie value — taken from the original file the
+    operator captured, so the rewritten file stays format-compatible
+    with cookies.txt readers (other tools, ``curl``, etc.).
+    """
+    cookie_path = Path(path)
+    lines: list[str] = ["# Netscape HTTP Cookie File"]
+    # Browsers conventionally write cookies sorted by name; we don't
+    # rely on order so leave insertion-order.
+    for cookie in template_jar.jar:
+        name = cookie.name
+        value = name_value_pairs.get(name, cookie.value or "")
+        domain = cookie.domain
+        path_field = cookie.path or "/"
+        secure = "TRUE" if cookie.secure else "FALSE"
+        # The "include subdomains" flag mirrors the leading dot
+        # convention; treat domain starting with "." as inclusive.
+        include_subs = "TRUE" if domain.startswith(".") else "FALSE"
+        expiry = str(int(cookie.expires)) if cookie.expires is not None else "0"
+        lines.append("\t".join((domain, include_subs, path_field, secure, expiry, name, value)))
+    tmp_path = cookie_path.with_suffix(cookie_path.suffix + ".tmp")
+    tmp_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp_path.chmod(0o600)
+    tmp_path.replace(cookie_path)
