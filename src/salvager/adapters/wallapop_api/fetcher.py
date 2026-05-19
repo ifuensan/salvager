@@ -41,6 +41,7 @@ Logging events
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -49,6 +50,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -226,7 +228,11 @@ class WallapopApiFetcher(PageFetcher):
         encode at the end after the last ``-``); we pass the full
         slug, which the API tolerates.
         """
-        listing_id = listing_url.rstrip("/").rsplit("/", 1)[-1]
+        # Pasted Wallapop URLs often carry ``?source=...`` / ``#anchor`` —
+        # drop both before extracting the trailing slug, or the upstream
+        # endpoint 404s on an otherwise valid URL.
+        listing_path = urlsplit(listing_url).path.rstrip("/")
+        listing_id = listing_path.rsplit("/", 1)[-1]
         path = _ITEM_PATH_TEMPLATE.format(listing_id=listing_id)
         started = time.perf_counter()
         try:
@@ -311,11 +317,18 @@ def _unix_millis_to_dt(value: int | None) -> datetime | None:
 
 
 def _from_validation_error(exc: ValidationError) -> WallapopSchemaDrift:
-    """Map pydantic's ValidationError to a single :class:`WallapopSchemaDrift`."""
+    """Map pydantic's ValidationError to a single :class:`WallapopSchemaDrift`.
+
+    Pydantic reports ``loc`` rooted at the model being validated, so the
+    path already includes the envelope segments (``data.section.items.0.id``)
+    for search responses and just the field name (``id``) for the per-item
+    endpoint. Both are useful as-is — adding an extra prefix would either
+    duplicate or mis-attribute the path.
+    """
     first = exc.errors()[0]
     path = ".".join(str(p) for p in first["loc"])
     return WallapopSchemaDrift(
-        field_path=f"data.section.items.{path}" if path else "<root>",
+        field_path=path or "<root>",
         detail=first["msg"],
     )
 
@@ -378,6 +391,10 @@ class _RefreshingSession:
         # `salvager login wallapop` runs doesn't crash at import.
         self._jar: Any = None  # httpx.Cookies; typed loose to avoid module-level import
         self._cookies: dict[str, str] | None = None
+        # Serializes the 401 refresh dance so concurrent search()/fetch()
+        # calls don't fire two federated-session refreshes in parallel
+        # and clobber each other's rotated cookies.
+        self._refresh_lock = asyncio.Lock()
         self._log = get_logger("adapter.wallapop_api")
 
     def _ensure_cookies_loaded(self) -> dict[str, str]:
@@ -392,14 +409,21 @@ class _RefreshingSession:
         if response.status_code != 401:
             return response
 
-        # 401 → refresh dance → retry once. If refresh itself fails,
-        # let the original 401 propagate (caller will raise
-        # WallapopSessionExpired and the operator re-runs `salvager
-        # login wallapop`).
-        refreshed = await self._refresh_session()
-        if not refreshed:
-            return response
-        return await self._do_request(path, params, self._cookies or {})
+        # 401 → refresh dance → retry once. Serialize through the lock
+        # so concurrent callers don't double-refresh; once inside the
+        # lock, re-check with the current cookies first — another caller
+        # may have already rotated tokens while we waited. If refresh
+        # itself fails, let the original 401 propagate (caller raises
+        # WallapopSessionExpired and operator re-runs `salvager login
+        # wallapop`).
+        async with self._refresh_lock:
+            retry_response = await self._do_request(path, params, self._cookies or {})
+            if retry_response.status_code != 401:
+                return retry_response
+            refreshed = await self._refresh_session()
+            if not refreshed:
+                return response
+            return await self._do_request(path, params, self._cookies or {})
 
     async def _do_request(
         self,
