@@ -152,6 +152,7 @@ def compose_daemon(
 
     wallapop_job = _build_wallapop_job(
         env=env,
+        config=config,
         data_dir=data_dir,
         wishlist=wishlist,
         evaluator=evaluator,
@@ -256,6 +257,7 @@ def _build_evaluator(
 def _build_wallapop_job(
     *,
     env: EnvSettings,
+    config: ConfigModel,
     data_dir: Path,
     wishlist: Wishlist,
     evaluator: CachingListingEvaluator,
@@ -273,7 +275,11 @@ def _build_wallapop_job(
         )
         return None
 
-    api_fetcher: PageFetcher = WallapopApiFetcher(cookies_path=cookies_path)
+    api_fetcher: PageFetcher = WallapopApiFetcher(
+        cookies_path=cookies_path,
+        latitude=config.wallapop.latitude,
+        longitude=config.wallapop.longitude,
+    )
     tinyfish_fetcher: PageFetcher = WallapopTinyfishFetcher(api_key=env.TINYFISH_API_KEY)
     fallback = WallapopFallbackFetcher(
         api_fetcher=api_fetcher,

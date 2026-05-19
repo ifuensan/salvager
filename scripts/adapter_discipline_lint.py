@@ -28,6 +28,7 @@ DENY_LIST: tuple[str, ...] = (
     "telegram",  # python-telegram-bot via adapter only
     "httpx",  # AR23 + adapter discipline (external HTTP via adapters only)
     "playwright",  # browser sessions via TinyFish browser adapter only
+    "curl_cffi",  # TLS-impersonating HTTP only inside adapters/wallapop_api/
 )
 
 

@@ -86,6 +86,18 @@ ebay:
   daily_request_quota: 5000
 
 # ─────────────────────────────────────────────────────────────────────────
+# wallapop — operator location for the v3 search endpoint
+# ─────────────────────────────────────────────────────────────────────────
+wallapop:
+  # `/api/v3/search/section` requires `latitude` + `longitude` query
+  # params (the SPA passes the browser geolocation). Defaults below
+  # are Madrid centre — change to your real location only if you
+  # care about proximity ranking; the search itself returns
+  # nationwide-shippable items regardless of these coords.
+  latitude: 40.4168
+  longitude: -3.7038
+
+# ─────────────────────────────────────────────────────────────────────────
 # logging — structured JSON Lines on stdout (NFR-O1)
 # ─────────────────────────────────────────────────────────────────────────
 logging:
