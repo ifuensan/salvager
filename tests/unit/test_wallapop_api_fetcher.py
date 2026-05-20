@@ -211,6 +211,36 @@ async def test_search_returns_domain_listings(tmp_path: Path) -> None:
     assert second.description == ""
     # No created_at → published_at None.
     assert second.published_at is None
+    # No `reserved` envelope on either item → both default to not-reserved.
+    assert first.is_reserved is False
+    assert second.is_reserved is False
+
+
+@pytest.mark.asyncio
+async def test_search_maps_reserved_flag_to_is_reserved(tmp_path: Path) -> None:
+    """``reserved: {flag: true}`` on the upstream item must surface as
+    ``Listing.is_reserved=True``; ``flag: false`` and missing envelope
+    both surface as False. The orchestrator relies on this for the
+    "skip eval + alert on reserved" routing.
+    """
+
+    def handler(_: _RecordedRequest) -> WallapopResponse:
+        payload = _valid_search_payload()
+        items = payload["data"]["section"]["items"]
+        items[0]["reserved"] = {"flag": True}
+        items[1]["reserved"] = {"flag": False}
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
+
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listings = await fetcher.search(
+            SearchQuery(keywords=["WD Red Plus 4TB"], marketplace="wallapop")
+        )
+    finally:
+        await fetcher.aclose()
+
+    assert listings[0].is_reserved is True
+    assert listings[1].is_reserved is False
 
 
 # ─────────────────────────────────────────────────────────────────────────

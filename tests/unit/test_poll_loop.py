@@ -87,6 +87,7 @@ def _listing(
     *,
     title: str = "WD Red Plus 4TB",
     price: Decimal = Decimal("55.00"),
+    is_reserved: bool = False,
 ) -> Listing:
     return Listing(
         listing_id=listing_id,
@@ -98,6 +99,7 @@ def _listing(
         location="Madrid",
         photo_urls=["https://cdn/photo.jpg"],
         fetched_at=_T0,
+        is_reserved=is_reserved,
     )
 
 
@@ -330,6 +332,85 @@ async def test_below_threshold_listing_marked_seen_and_logged_dropped(
     records = _records(out)
     dropped = [r for r in records if r["event"] == "listing_dropped_below_threshold"]
     assert dropped and dropped[0]["confidence"] == "medium"
+
+
+async def test_reserved_listings_skip_eval_record_seen_and_emit_comp_log(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reserved listings are still useful comps, but they MUST NOT:
+    - reach the LLM evaluator (eval cost on dead inventory)
+    - trigger a Telegram alert (operator can't buy them)
+
+    They MUST be marked seen so the next cycle doesn't process them
+    again, and the cycle SHOULD emit a structured comp-observation
+    log line so an operator (or a future renderer) can act on the
+    price signal.
+    """
+    entry = _entry()
+    fetcher = _FakeFetcher(
+        response=[
+            _listing("buyable1"),
+            _listing("res1", price=Decimal("80.00"), is_reserved=True),
+            _listing("res2", price=Decimal("230.00"), is_reserved=True),
+        ]
+    )
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.result_count == 3
+    assert summary.new_count == 3
+    assert summary.reserved_count == 2
+    # Only the buyable listing reached the evaluator.
+    assert [call[0] for call in evaluator.calls] == ["buyable1"]
+    # Both reserved are recorded as seen so next cycle doesn't reprocess them.
+    assert ("res1", entry.entry_key) in store.seen
+    assert ("res2", entry.entry_key) in store.seen
+    # Only the buyable triggered an alert (high-confidence default).
+    assert summary.alerts_sent == 1
+    assert len(telegram.sends) == 1
+
+    out = capsys.readouterr().out
+    records = _records(out)
+    comp_logs = [r for r in records if r["event"] == "reserved_comps_observed"]
+    assert len(comp_logs) == 1
+    assert comp_logs[0]["reserved_count"] == 2
+    assert sorted(comp_logs[0]["comp_prices_eur"]) == ["230.00", "80.00"]
+
+
+async def test_only_reserved_listings_skips_eval_and_no_alerts() -> None:
+    """When every candidate is reserved, the evaluator must never run
+    and no alert is dispatched. ``new_count`` still counts everyone (it
+    is a "fresh sighting" counter, not a "buyable" counter).
+    """
+    entry = _entry()
+    fetcher = _FakeFetcher(
+        response=[
+            _listing("res1", is_reserved=True),
+            _listing("res2", price=Decimal("70.00"), is_reserved=True),
+        ]
+    )
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert evaluator.calls == []
+    assert summary.alerts_sent == 0
+    assert summary.reserved_count == 2
+    assert summary.new_count == 2
+    assert telegram.sends == []
 
 
 async def test_already_seen_listings_are_filtered_before_eval() -> None:

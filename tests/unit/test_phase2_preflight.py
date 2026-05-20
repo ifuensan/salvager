@@ -116,6 +116,18 @@ async def test_entry_phase2_disabled_is_ineligible() -> None:
     assert result.reason == "phase2_disabled_for_entry"
 
 
+async def test_reserved_listing_is_ineligible_for_phase2() -> None:
+    """A reserved listing can't be Phase-2-bought even if every other
+    check would pass — the inventory's gone. The gate downgrades the
+    alert to Phase 1 so the operator still sees market signal, no Buy
+    CTA.
+    """
+    reserved = _listing().model_copy(update={"is_reserved": True})
+    result = await _preflight(_state()).check(_entry(), reserved, _evaluation())
+    assert result.eligible is False
+    assert result.reason == "listing_reserved"
+
+
 async def test_max_price_unset_is_ineligible() -> None:
     entry = _entry()
     entry = entry.model_copy(update={"phase2": Phase2Settings(enabled=True, max_price_eur=None)})
