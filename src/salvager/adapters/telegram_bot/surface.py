@@ -97,6 +97,19 @@ class TelegramBotProtocol(Protocol):
         reply_markup: Any = ...,
     ) -> Any: ...
 
+    async def get_updates(
+        self,
+        offset: int | None = ...,
+        limit: int | None = ...,
+        timeout: int | None = ...,
+        allowed_updates: list[str] | None = ...,
+    ) -> Any: ...
+
+    async def answer_callback_query(
+        self,
+        callback_query_id: str,
+    ) -> Any: ...
+
 
 class TelegramBotSurface(TelegramSurface):
     """``TelegramSurface`` backed by ``python-telegram-bot``."""
@@ -199,16 +212,163 @@ class TelegramBotSurface(TelegramSurface):
             raise TelegramConfigError(str(exc)) from exc
 
     async def listen_callbacks(self, handler: CallbackHandler) -> None:
-        """Production loop wiring lands when the orchestration story
-        composes this with the daemon's main loop (Story 3.14). At v0.x
-        of Story 3.12 the parser is exposed via :meth:`parse_callback`
-        for unit testing; the application-level dispatcher will call
-        it on each inbound ``telegram.CallbackQuery``."""
-        _ = handler
-        raise NotImplementedError(
-            "listen_callbacks is wired in Story 3.14 (poll-loop orchestrator). "
-            "Use parse_callback() to parse a single CallbackQuery in the meantime."
+        """Long-poll Telegram for callback queries and dispatch them.
+
+        Runs until cancelled (``asyncio.CancelledError``) — the daemon
+        runs this concurrently with the scheduler and cancels it on
+        SIGTERM/SIGINT. For each ``callback_query`` update:
+
+        1. Parse it via :meth:`parse_callback` — this drops malformed
+           data and off-allowlist chat IDs silently.
+        2. Invoke the handler. Handler exceptions are caught + logged;
+           the loop never dies on one bad tap.
+        3. ``answer_callback_query`` so Telegram stops the operator-
+           visible loading spinner. Acknowledgment is best-effort — if
+           the API call fails we log and move on; the keyboard edit
+           the dispatcher made is what the operator actually sees.
+
+        Transient ``get_updates`` failures (network, RetryAfter) back
+        off by the configured retry delays and resume. Non-retryable
+        failures raise :class:`TelegramConfigError` so the daemon's
+        supervisor task surfaces them loudly.
+
+        Offset bookkeeping: Telegram's ``get_updates`` is at-least-once
+        until the next call passes ``offset=update_id+1``. We advance
+        the offset after each update so the next ``get_updates`` only
+        returns NEW updates — re-fetching the same callback would
+        double-record the audit row.
+        """
+        offset: int | None = None
+        backoff_index = 0
+        while True:
+            try:
+                updates = await self._invoke_get_updates(offset=offset)
+            except _RetryableTelegramError as exc:
+                if not self._retry_delays:
+                    # `retry_delays=()` opts out of retries entirely
+                    # (matches the send() semantics). Without this
+                    # guard, indexing an empty tuple at ``-1`` would
+                    # crash the listener loop on the first transient
+                    # blip — caught by Devin on PR #8.
+                    self._log.error(
+                        "telegram_listen_failed_no_retries_configured",
+                        extra={"error_class": exc.original.__class__.__name__},
+                    )
+                    raise TelegramDeliveryFailed(
+                        f"get_updates failed (no retries configured): {exc.original}"
+                    ) from exc.original
+                delay = self._retry_delays[min(backoff_index, len(self._retry_delays) - 1)]
+                self._log.warning(
+                    "telegram_get_updates_retry",
+                    extra={
+                        "error_class": exc.original.__class__.__name__,
+                        "delay_s": delay,
+                    },
+                )
+                await self._sleep(delay)
+                backoff_index += 1
+                continue
+            except _NonRetryableTelegramError as exc:
+                self._log.error(
+                    "telegram_listen_config_error",
+                    extra={"error_class": exc.original.__class__.__name__},
+                )
+                raise TelegramConfigError(str(exc.original)) from exc.original
+
+            backoff_index = 0
+            for update in updates:
+                offset = self._max_update_id(offset, update)
+                await self._dispatch_update(update, handler)
+
+    async def _invoke_get_updates(self, *, offset: int | None) -> list[Any]:
+        """One ``get_updates`` call with retry-classification.
+
+        Long-polls for 30 s server-side — the call returns immediately
+        when a callback arrives, otherwise blocks until the timeout.
+        We constrain ``allowed_updates`` to ``callback_query`` so we
+        don't process group messages, edited messages, etc. (the bot
+        is a one-operator surface).
+        """
+        try:
+            updates = await self._bot.get_updates(
+                offset=offset,
+                timeout=30,
+                allowed_updates=["callback_query"],
+            )
+        except Exception as exc:
+            if _is_retryable(exc):
+                raise _RetryableTelegramError(exc) from exc
+            raise _NonRetryableTelegramError(exc) from exc
+        return list(updates)
+
+    @staticmethod
+    def _max_update_id(current_offset: int | None, update: Any) -> int:
+        """Compute the offset to pass to the NEXT ``get_updates`` call.
+
+        Telegram increments ``update_id`` per update; the docs say to
+        pass ``last_seen_id + 1`` to acknowledge consumption.
+        """
+        update_id = int(update.update_id)
+        candidate = update_id + 1
+        if current_offset is None:
+            return candidate
+        return max(current_offset, candidate)
+
+    async def _dispatch_update(self, update: Any, handler: CallbackHandler) -> None:
+        """Parse + hand off one Telegram Update; never raises."""
+        callback_query = getattr(update, "callback_query", None)
+        if callback_query is None:
+            return  # not a callback (e.g. a stray non-allowed update type)
+
+        callback_id = str(callback_query.id)
+        message = getattr(callback_query, "message", None)
+        if message is None:
+            # Telegram allows callback_query without an attached message
+            # (e.g. inline-mode replies). Our buttons always travel
+            # alongside a message, so the absence is a sign of stray
+            # input — ack it and drop it.
+            await self._ack_callback_best_effort(callback_id)
+            return
+
+        event = self.parse_callback(
+            chat_id=int(message.chat.id),
+            message_id=int(message.message_id),
+            callback_query_id=callback_id,
+            callback_data=str(callback_query.data or ""),
         )
+        if event is None:
+            # parse_callback already logged the reason at debug.
+            await self._ack_callback_best_effort(callback_id)
+            return
+
+        try:
+            await handler(event)
+        except Exception as exc:
+            # Handler is application-layer code; a single bad tap must
+            # not kill the daemon's listener loop.
+            self._log.error(
+                "telegram_callback_handler_failed",
+                extra={
+                    "error_class": exc.__class__.__name__,
+                    "callback_data": event.callback_data,
+                },
+            )
+        await self._ack_callback_best_effort(callback_id)
+
+    async def _ack_callback_best_effort(self, callback_query_id: str) -> None:
+        """Stop Telegram's loading-spinner on the operator side.
+
+        Failure here is non-fatal: the keyboard edit the dispatcher
+        already made is the real "tap registered" signal; this call
+        just clears the transient spinner.
+        """
+        try:
+            await self._bot.answer_callback_query(callback_query_id)
+        except Exception as exc:
+            self._log.warning(
+                "telegram_answer_callback_failed",
+                extra={"error_class": exc.__class__.__name__},
+            )
 
     # ─────────────────────────────────────────────────────────────────
     # Test affordances + production helper for the future orchestrator

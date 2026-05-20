@@ -64,6 +64,10 @@ from salvager.interfaces.listing_evaluator import ListingEvaluator
 from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.interfaces.scheduler import Scheduler
 from salvager.observability.logging import get_logger
+from salvager.orchestration.callback_handler import (
+    DEFAULT_SNOOZE_HOURS,
+    CallbackDispatcher,
+)
 from salvager.orchestration.daemon import Daemon
 from salvager.orchestration.degradation_reporter import DegradationReporter
 from salvager.orchestration.health_state import HealthState
@@ -90,11 +94,23 @@ class NoMarketplacesEnabledError(RuntimeError):
 class ComposedDaemon:
     """The output of :func:`compose_daemon` — the daemon plus the
     handles the CLI needs to close on shutdown (so the SQLite files
-    are flushed before the process exits)."""
+    are flushed before the process exits).
+
+    ``telegram`` + ``dispatcher`` are exposed so the daemon entry-point
+    can run :meth:`TelegramSurface.listen_callbacks` concurrently with
+    the scheduler — view/skip/snooze taps drive Phase 1 audit + state
+    + keyboard edits through the dispatcher. ``buy_orchestrator`` is
+    intentionally not wired at this layer yet; the dispatcher's
+    ``buy_orchestrator=None`` defence-in-depth keeps Phase 2 buy taps
+    from blowing up the listener (audit row + in-flight badge land,
+    purchase is logged ``buy_orchestrator_not_wired`` and held).
+    """
 
     daemon: Daemon
     store: SqliteStore
     cache: SqliteLlmEvalCache
+    telegram: TelegramBotSurface
+    dispatcher: CallbackDispatcher
 
     async def aclose(self) -> None:
         """Close every adapter that owns OS resources. Idempotent —
@@ -186,7 +202,28 @@ def compose_daemon(
         ebay_job=ebay_job,
         ebay_cadence_minutes=config.schedule.ebay_minutes,
     )
-    return ComposedDaemon(daemon=daemon, store=store, cache=cache)
+
+    # Phase 1 callback wiring. ``buy_orchestrator=None`` is deliberate:
+    # the BuyOrchestrator pulls in the TinyFish browser, reconciler,
+    # circuit breaker, audit writer, wishlist loader, and Phase 2
+    # audit DAL — a separate composition pass. With None here, the
+    # dispatcher records the audit row + flips the in-flight badge on
+    # ``buy`` taps and logs ``buy_orchestrator_not_wired`` instead of
+    # firing the buy. Wiring lands in a follow-up PR.
+    dispatcher = CallbackDispatcher(
+        store=store,
+        surface=telegram,
+        buy_orchestrator=None,
+        snooze_hours=DEFAULT_SNOOZE_HOURS,
+    )
+
+    return ComposedDaemon(
+        daemon=daemon,
+        store=store,
+        cache=cache,
+        telegram=telegram,
+        dispatcher=dispatcher,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import Any
 
 import pytest
@@ -108,6 +110,23 @@ class _FakeBot:
         )
         self._maybe_raise()
 
+    async def get_updates(
+        self,
+        offset: int | None = None,
+        limit: int | None = None,
+        timeout: int | None = None,
+        allowed_updates: list[str] | None = None,
+    ) -> list[Any]:
+        # Test seam unused — listener tests inject their own bot.
+        return []
+
+    async def answer_callback_query(
+        self,
+        callback_query_id: str,
+    ) -> None:
+        self.answer_calls: list[str] = getattr(self, "answer_calls", [])
+        self.answer_calls.append(callback_query_id)
+
 
 class _NetworkError(Exception):
     """Class name mirrors python-telegram-bot's NetworkError for routing."""
@@ -140,6 +159,7 @@ def _build_surface(
     *,
     chat_id: int = 12345,
     retry_delays: tuple[float, ...] = (0.0, 0.0),
+    sleep: Any = None,
 ) -> tuple[TelegramBotSurface, list[float]]:
     sleeps, sleep_fn = _record_sleeps()
     surface = TelegramBotSurface(
@@ -147,7 +167,7 @@ def _build_surface(
         chat_id,
         bot=bot,
         retry_delays=retry_delays,
-        sleep=sleep_fn,
+        sleep=sleep if sleep is not None else sleep_fn,
     )
     return surface, sleeps
 
@@ -384,19 +404,281 @@ def test_no_other_package_imports_telegram() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# listen_callbacks placeholder (full wiring lands in Story 3.14)
+# listen_callbacks — long-poll loop + dispatch
 # ─────────────────────────────────────────────────────────────────────────
 
 
+class _FakeCallbackQuery:
+    """Stand-in for ``telegram.CallbackQuery`` carrying only the fields
+    the listener reads."""
+
+    def __init__(self, *, query_id: str, chat_id: int, message_id: int, data: str) -> None:
+        self.id = query_id
+        self.data = data
+        # The real CallbackQuery exposes ``message`` (a Message which has
+        # ``chat`` and ``message_id``); replicate that shape.
+        self.message = _FakeMessageWithChat(chat_id=chat_id, message_id=message_id)
+
+
+class _FakeMessageWithChat:
+    def __init__(self, *, chat_id: int, message_id: int) -> None:
+        self.message_id = message_id
+        self.chat = _FakeChat(chat_id)
+
+
+class _FakeChat:
+    def __init__(self, chat_id: int) -> None:
+        self.id = chat_id
+
+
+class _FakeUpdate:
+    def __init__(self, *, update_id: int, callback_query: Any = None) -> None:
+        self.update_id = update_id
+        self.callback_query = callback_query
+
+
+class _ListenerFakeBot(_FakeBot):
+    """Variant that hands out scripted ``get_updates`` batches.
+
+    Each batch is a single list of Updates. After the configured
+    batches run out the next call raises ``asyncio.CancelledError`` so
+    the listener exits cleanly — matches the production daemon's
+    cancel-on-shutdown signal.
+    """
+
+    def __init__(self, batches: list[list[_FakeUpdate]]) -> None:
+        super().__init__()
+        self._batches = list(batches)
+        self.get_updates_calls: list[dict[str, Any]] = []
+        self.answer_calls: list[str] = []
+
+    async def get_updates(
+        self,
+        offset: int | None = None,
+        limit: int | None = None,
+        timeout: int | None = None,
+        allowed_updates: list[str] | None = None,
+    ) -> list[Any]:
+        self.get_updates_calls.append(
+            {"offset": offset, "timeout": timeout, "allowed_updates": allowed_updates}
+        )
+        if not self._batches:
+            raise asyncio.CancelledError
+        return self._batches.pop(0)
+
+    async def answer_callback_query(self, callback_query_id: str) -> None:
+        self.answer_calls.append(callback_query_id)
+
+
+async def _drain_listener(surface: Any, handler: Any) -> None:
+    """Run the listener to completion; CancelledError ends the loop."""
+    with contextlib.suppress(asyncio.CancelledError):
+        await surface.listen_callbacks(handler)
+
+
 @pytest.mark.asyncio
-async def test_listen_callbacks_raises_not_implemented_at_v0() -> None:
-    """The dispatcher loop lives in the orchestrator (Story 3.14). At
-    v0.x of Story 3.12 we ship parse_callback() so unit tests can
-    exercise the parse path; the application-level glue lands next."""
-    surface, _ = _build_surface(_FakeBot())
+async def test_listen_callbacks_dispatches_each_callback_to_handler() -> None:
+    """The happy path: one Update with a callback_query → handler
+    gets the parsed event with the chat / message / verb pulled out
+    of the Telegram payload."""
+    cb = _FakeCallbackQuery(
+        query_id="cq-1",
+        chat_id=12345,
+        message_id=99,
+        data="listing:view:00000000-0000-0000-0000-000000000001",
+    )
+    bot = _ListenerFakeBot(batches=[[_FakeUpdate(update_id=10, callback_query=cb)]])
+    surface, _ = _build_surface(bot, chat_id=12345)
+
+    handled: list[Any] = []
+
+    async def _handler(event: Any) -> None:
+        handled.append(event)
+
+    await _drain_listener(surface, _handler)
+
+    assert len(handled) == 1
+    assert handled[0].verb == "view"
+    assert handled[0].message_id == 99
+    assert handled[0].callback_query_id == "cq-1"
+
+
+@pytest.mark.asyncio
+async def test_listen_callbacks_advances_offset_to_update_id_plus_one() -> None:
+    """Offset semantics: the next ``get_updates`` must use
+    ``last_seen_update_id + 1`` so Telegram doesn't re-send the same
+    callback — double-recording the audit row would be a real bug."""
+    cb = _FakeCallbackQuery(
+        query_id="cq-1",
+        chat_id=12345,
+        message_id=99,
+        data="listing:view:00000000-0000-0000-0000-000000000001",
+    )
+    bot = _ListenerFakeBot(batches=[[_FakeUpdate(update_id=42, callback_query=cb)]])
+    surface, _ = _build_surface(bot, chat_id=12345)
 
     async def _handler(_event: Any) -> None:
         pass
 
-    with pytest.raises(NotImplementedError):
+    await _drain_listener(surface, _handler)
+
+    # Two get_updates calls: first with offset=None, second with 43.
+    # (The second call is the one that raises CancelledError to end the loop.)
+    assert len(bot.get_updates_calls) == 2
+    assert bot.get_updates_calls[0]["offset"] is None
+    assert bot.get_updates_calls[1]["offset"] == 43
+
+
+@pytest.mark.asyncio
+async def test_listen_callbacks_acks_every_callback_regardless_of_handler_outcome() -> None:
+    """``answer_callback_query`` runs for ALL paths: parse-drop,
+    handler success, handler raised. Without this Telegram's loading
+    spinner sits on the operator's screen until it times out — that
+    looks broken even when the actual effect landed."""
+    happy = _FakeCallbackQuery(
+        query_id="cq-ok",
+        chat_id=12345,
+        message_id=1,
+        data="listing:view:00000000-0000-0000-0000-000000000001",
+    )
+    raises_in_handler = _FakeCallbackQuery(
+        query_id="cq-boom",
+        chat_id=12345,
+        message_id=2,
+        data="listing:skip:00000000-0000-0000-0000-000000000002",
+    )
+    wrong_chat = _FakeCallbackQuery(
+        query_id="cq-stranger",
+        chat_id=99999,  # not on the allowlist
+        message_id=3,
+        data="listing:view:00000000-0000-0000-0000-000000000003",
+    )
+    bot = _ListenerFakeBot(
+        batches=[
+            [
+                _FakeUpdate(update_id=1, callback_query=happy),
+                _FakeUpdate(update_id=2, callback_query=raises_in_handler),
+                _FakeUpdate(update_id=3, callback_query=wrong_chat),
+            ]
+        ]
+    )
+    surface, _ = _build_surface(bot, chat_id=12345)
+
+    async def _handler(event: Any) -> None:
+        if event.callback_query_id == "cq-boom":
+            raise RuntimeError("handler exploded")
+
+    await _drain_listener(surface, _handler)
+
+    assert set(bot.answer_calls) == {"cq-ok", "cq-boom", "cq-stranger"}
+
+
+@pytest.mark.asyncio
+async def test_listen_callbacks_retries_on_transient_get_updates_failure() -> None:
+    """A NetworkError on get_updates triggers backoff (via the
+    injected sleep) and the next attempt resumes. The handler never
+    sees the transient error."""
+    cb = _FakeCallbackQuery(
+        query_id="cq-1",
+        chat_id=12345,
+        message_id=99,
+        data="listing:view:00000000-0000-0000-0000-000000000001",
+    )
+
+    class _FlakeyBot(_ListenerFakeBot):
+        def __init__(self) -> None:
+            super().__init__(batches=[[_FakeUpdate(update_id=10, callback_query=cb)]])
+            self._fail_next = True
+
+        async def get_updates(
+            self,
+            offset: int | None = None,
+            limit: int | None = None,
+            timeout: int | None = None,
+            allowed_updates: list[str] | None = None,
+        ) -> list[Any]:
+            if self._fail_next:
+                self._fail_next = False
+                raise _NetworkError("transient")
+            return await super().get_updates(
+                offset=offset,
+                limit=limit,
+                timeout=timeout,
+                allowed_updates=allowed_updates,
+            )
+
+    bot = _FlakeyBot()
+    sleeps: list[float] = []
+
+    async def _record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    surface, _ = _build_surface(bot, chat_id=12345, sleep=_record_sleep)
+
+    handled: list[Any] = []
+
+    async def _handler(event: Any) -> None:
+        handled.append(event)
+
+    await _drain_listener(surface, _handler)
+
+    assert sleeps  # at least one backoff happened
+    assert len(handled) == 1  # the callback still got dispatched after retry
+
+
+@pytest.mark.asyncio
+async def test_listen_callbacks_raises_delivery_failed_when_retry_delays_empty() -> None:
+    """``retry_delays=()`` opts out of retries (matches ``send()``).
+
+    Before the fix from PR #8, this case crashed the listener with an
+    IndexError because the indexing used ``len(()) - 1 == -1`` and
+    ``()[-1]`` raises. Behaviour now matches the send path: a
+    retryable error with no retries to give surfaces as
+    ``TelegramDeliveryFailed``, which the supervisor in ``_serve``
+    catches and logs.
+    """
+
+    class _AlwaysFlakyBot(_FakeBot):
+        async def get_updates(
+            self,
+            offset: int | None = None,
+            limit: int | None = None,
+            timeout: int | None = None,
+            allowed_updates: list[str] | None = None,
+        ) -> list[Any]:
+            raise _NetworkError("transient")
+
+    bot = _AlwaysFlakyBot()
+    surface, _ = _build_surface(bot, chat_id=12345, retry_delays=())
+
+    async def _handler(_event: Any) -> None:
+        pass
+
+    with pytest.raises(TelegramDeliveryFailed):
+        await surface.listen_callbacks(_handler)
+
+
+@pytest.mark.asyncio
+async def test_listen_callbacks_raises_config_error_on_non_retryable_failure() -> None:
+    """A 4xx-class error (e.g. invalid token) is not a transient
+    blip — bubble it up so the daemon surfaces it loudly instead of
+    silently retrying forever."""
+
+    class _BadAuthBot(_FakeBot):
+        async def get_updates(
+            self,
+            offset: int | None = None,
+            limit: int | None = None,
+            timeout: int | None = None,
+            allowed_updates: list[str] | None = None,
+        ) -> list[Any]:
+            raise _BadRequest("invalid bot token")
+
+    bot = _BadAuthBot()
+    surface, _ = _build_surface(bot, chat_id=12345)
+
+    async def _handler(_event: Any) -> None:
+        pass
+
+    with pytest.raises(TelegramConfigError):
         await surface.listen_callbacks(_handler)
