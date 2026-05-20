@@ -6,7 +6,7 @@ This document names what's planned, what's deferred post-launch, what's permanen
 
 ## Where we are
 
-**`v0.2.2` shipped — Phase 1 + Phase 2 feature-complete preview.** All five planned epics' code landed in v0.2.0; v0.2.1 + v0.2.2 are Docker operational patches (non-root runtime user, baked commit SHA, `pyproject.toml` version aligned with the tag) with no functional changes. See [`CHANGELOG.md`](CHANGELOG.md) for the per-patch detail.
+**`v0.2.3` shipped — Phase 1 + Phase 2 feature-complete preview.** All five planned epics' code landed in v0.2.0; v0.2.1 + v0.2.2 were Docker operational patches; v0.2.3 stabilises the Wallapop adapter against the SPA's current production traffic (v3 `/search/section` endpoint, browser-TLS impersonation via `curl_cffi`, transparent JWT refresh, reserved-listing routing) and auto-accepts the ConsentManager cookie banner during `login wallapop`. See [`CHANGELOG.md`](CHANGELOG.md) for the per-patch detail.
 
 - ✓ **Epic 1** (Foundation) — installable skeleton, hexagonal layout, CI gates, Docker image. Shipped as `v0.1.0` in April 2026.
 - ✓ **Epic 2** (Wishlist, Config, Credentials) — pydantic v2 schemas, `.env` loader, wishlist YAML round-trip.
@@ -14,7 +14,7 @@ This document names what's planned, what's deferred post-launch, what's permanen
 - ✓ **Epic 4** (Telegram Surface + CLI Operability) — alert renderer, callback handler, snooze flow, audit log + audit/health/explain CLI commands, operational alert variants.
 - ✓ **Epic 5** (Phase 2 Autonomous Purchase + Safety Stack) — Phase 2 listing/buy renderers, TinyFish browser adapter (Wallapop Pay + eBay checkout), cross-source + receipt reconciliation, per-purchase circuit breaker, daily synthetic smoke test, BuyOrchestrator, `phase2 enable/disable/status/smoke-test/reconcile` CLI, payment-rail enforcement CI lint, 90% critical-path coverage gate, release-audit tooling.
 
-**Promotion to `v1.0.0` is gated on production burn-in**, not feature completion. Recommended pinned tag for burn-in: `ghcr.io/ifuensan/salvager:0.2.2`. See [`CHANGELOG.md`](CHANGELOG.md) for the release notes and the `[1.0.0] — future` placeholder spelling out the promotion criteria.
+**Promotion to `v1.0.0` is gated on production burn-in**, not feature completion. Recommended pinned tag for burn-in: `ghcr.io/ifuensan/salvager:0.2.3`. See [`CHANGELOG.md`](CHANGELOG.md) for the release notes and the `[1.0.0] — future` placeholder spelling out the promotion criteria.
 
 The full epic + story breakdown lives in [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md). The release-gate audit artefact lives in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md).
 
@@ -26,13 +26,13 @@ The v0.2.x line ships all Phase 1 + Phase 2 code. v1.0.0 is gated on production 
 
 **Promotion criteria** (informal; tightened if reality requires it):
 
-1. ≥ 2 weeks of the v0.2.x stable image (`:0.2.2` recommended) running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
+1. ≥ 2 weeks of the v0.2.x stable image (`:0.2.3` recommended) running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
 2. ≥ 1 Phase 2 purchase completed end-to-end (or one verified Phase 2 abort with the safety stack engaging as designed). Counts as "the autonomous-buy path got exercised against the real world, not just synthetic tests".
 3. No critical rendering regression surfaced between v0.2.x and the v1.0.0 candidate (re-audit if `domain/alert.py` or the styling layer changes).
 4. **OQ3** — measured per-purchase TinyFish Browser cost (NFR-C2 cap is ≤ €1.00). v0.2.x is when this number first appears empirically; v1.0.0 confirms it.
 5. **OQ6** — language-register bias check on the first batch of real Telegram alerts. Castilian is the supported locale; Catalan / regional Spanish / Basque listings get best-effort treatment with a README disclosure at v1.
 
-The release-gate audit (Story 5.17) was performed against the v0.2.0 candidate and recorded `RESULT: PASS` in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md). The audit applies to the v0.2.x patch releases and to v1.0.0 too as long as no rendering / accessibility change lands between releases (v0.2.1 + v0.2.2 are Docker-only patches, no rendering touched).
+The release-gate audit (Story 5.17) was performed against the v0.2.0 candidate and recorded `RESULT: PASS` in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md). The audit applies to the v0.2.x patch releases and to v1.0.0 too as long as no rendering / accessibility change lands between releases (v0.2.1–v0.2.2 are Docker-only patches; v0.2.3 changes the Wallapop adapter and the `salvager test-search` CLI table but leaves `domain/alert.py` + the Telegram alert renderer untouched).
 
 **Phase 2 release-gate criteria already met by v0.2.0** (re-stated for completeness):
 

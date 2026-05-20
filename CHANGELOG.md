@@ -12,7 +12,98 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
-## [0.2.2] — _pending publish_
+## [0.2.3] — 2026-05-20
+
+Wallapop adapter stabilisation. The v0.2.0–0.2.2 line shipped before
+the operator had run a live `salvager test-search` against
+Wallapop's current production traffic; three failure modes that
+release-gate testing couldn't reach surfaced on the first end-to-end
+run and are fixed here.
+
+**Wallapop unofficial API — v3 endpoint migration**
+
+- The legacy `/api/v3/general/search` endpoint was deprecated by
+  Wallapop before 2026-05-18; it returns HTTP 403 (CDN-level) to
+  every client. The adapter now targets `/api/v3/search/section`
+  with `section_type=organic_search_results` and the required
+  `latitude` / `longitude` query params (browser geolocation).
+- Wallapop's CloudFront WAF rejects clients whose TLS handshake
+  doesn't match a real browser (JA3/JA4 fingerprinting); `httpx`
+  is one of those. The adapter now uses `curl_cffi.requests.AsyncSession`
+  with `impersonate='chrome131'` so the ClientHello replays Chrome's
+  bit-for-bit (NFR-M1 whitelist updated; `curl_cffi` is allowed only
+  inside `adapters/wallapop_api/`).
+- The SPA injects eight application-level headers the WAF cross-checks
+  against cookies: `Authorization: Bearer <accessToken>`, `mpid`,
+  `trackinguserid`, `x-deviceid`, `x-appversion`, `deviceos`,
+  `x-deviceos`, and a custom `Accept: application/json; sequence=v2`.
+  All eight are derived per-request from the cookie jar.
+- Keycloak access tokens live ~5 minutes. The adapter now does a
+  transparent refresh dance on 401: hit
+  `/api/auth/federated-session` with the current cookies, lift the
+  rotated `accessToken` + `__Secure-next-auth.session-token` from
+  the `Set-Cookie` response headers, persist atomically back to
+  `cookies.txt` (mode 0600), and retry the original request once.
+  The refresh path is serialised behind an `asyncio.Lock` so
+  concurrent search/fetch callers don't double-refresh and clobber
+  each other's rotated tokens. The in-memory cookie jar also
+  re-reads from disk when `cookies.txt` mtime advances, so an
+  operator re-running `salvager login wallapop` after both tokens
+  expire is picked up by the next poll cycle without a daemon
+  restart (#5).
+- New `wallapop.latitude` / `wallapop.longitude` config (defaults
+  Madrid centre, 40.4168 / -3.7038). The endpoint requires them and
+  enforces a sanity range on the values; operators in other regions
+  override in `config.yaml`.
+
+**Wallapop login — auto-accept the cookie banner**
+
+- The Playwright login driver now clicks Wallapop's
+  ConsentManager CMP "Aceptar todo" button itself right after
+  `page.goto`, sparing the operator one step. The banner element is
+  an `<a class="cmpboxbtnyes" role="button">` (not a `<button>`)
+  wrapped in `<span id="cmpwelcomebtnyes">`. We target the
+  ConsentManager-product class, which is stable across the CMP's
+  customers because the markup belongs to the third-party widget,
+  not Wallapop's own frontend. If the banner isn't there or the
+  markup shifts, the click silently times out and the operator
+  falls back to clicking it manually — no regression (#6).
+
+**Reserved-listing handling**
+
+- `Listing` gains `is_reserved: bool = False`. Wallapop sellers
+  flag listings reserved when the inventory is gone but the post
+  is still up; before this release the adapter parsed them
+  indistinguishable from buyable ones and the daemon could fire
+  Telegram buy alerts on dead inventory.
+- The Phase 2 pre-flight gate adds a new `listing_reserved` reason
+  that fires before the DB read, so reserved listings downgrade
+  silently to Phase 1 alerts (operator still sees market signal,
+  no Buy CTA they'd tap into a 404).
+- The poll cycle now partitions candidates into `(buyable, reserved)`.
+  Reserved listings never reach the LLM evaluator (no eval cost on
+  dead inventory) and never trigger alerts, but they are recorded as
+  seen so the next cycle doesn't reprocess them. Each reserved batch
+  emits a structured `reserved_comps_observed` event with the comp
+  prices for downstream uses.
+- `PollCycleSummary` gains `reserved_count` and a matching field in
+  the per-cycle log so operators can see the buyable/reserved split
+  at a glance.
+- `salvager test-search` adds a Reserved column to the table and a
+  footer one-liner with min/median/max comp prices when any reserved
+  listing showed up (#7).
+
+**Pre-login cookie fix (already on `main` as 25d2191)**
+
+- `_SESSION_COOKIE_NAMES` previously included `device_id`, which
+  Wallapop sets on every anonymous visit to `/login` — before
+  credentials are entered. The login poller was matching on that
+  pre-login cookie and declaring success with a useless jar. Narrowed
+  to the post-login session cookies (`accessToken` /
+  `__Secure-next-auth.session-token`) verified empirically against a
+  fresh Chromium context.
+
+## [0.2.2] — 2026-05-17
 
 Re-cut of v0.2.1 with `pyproject.toml` actually bumped to match the
 tag. The v0.2.1 GHCR image (`ghcr.io/ifuensan/salvager:0.2.1`)
@@ -233,8 +324,9 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.2.3...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.2.3]: https://github.com/ifuensan/salvager/releases/tag/v0.2.3
 [0.2.2]: https://github.com/ifuensan/salvager/releases/tag/v0.2.2
 [0.2.1]: https://github.com/ifuensan/salvager/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ifuensan/salvager/releases/tag/v0.2.0
