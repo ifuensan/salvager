@@ -229,3 +229,39 @@ def test_both_credentials_present_builds_both_jobs(
         import asyncio
 
         asyncio.run(composed.aclose())
+
+
+def test_composer_wires_telegram_listener_dispatcher_with_no_buy_orchestrator(
+    env: EnvSettings,
+    fake_dirs: tuple[Path, Path],
+    stub_adapters: dict[str, Any],
+) -> None:
+    """``ComposedDaemon`` exposes the Telegram surface and the
+    callback dispatcher so the CLI entry-point can run
+    ``listen_callbacks`` concurrently with the scheduler. The
+    ``buy_orchestrator`` is intentionally None at this composition
+    pass — Phase 2 buy taps fall back to the dispatcher's
+    defence-in-depth path (audit + badge + ``buy_orchestrator_not_wired``
+    log) until a follow-up PR wires the BuyOrchestrator.
+    """
+    config_dir, data_dir = fake_dirs
+    (data_dir / WALLAPOP_COOKIES_RELPATH.parent).mkdir(parents=True, exist_ok=True)
+    (data_dir / WALLAPOP_COOKIES_RELPATH).write_text("{}", encoding="utf-8")
+
+    composed = compose_daemon(
+        env,
+        config_path=config_dir / "config.yaml",
+        wishlist_path=config_dir / "wishlist.yaml",
+    )
+    try:
+        assert composed.telegram is not None
+        assert composed.dispatcher is not None
+        # The dispatcher must hold the same surface — otherwise an ack
+        # keyboard edit lands on a different bot than the operator sees.
+        assert composed.dispatcher._surface is composed.telegram
+        # Buy orchestrator deliberately not wired at this composition pass.
+        assert composed.dispatcher._buy_orchestrator is None
+    finally:
+        import asyncio
+
+        asyncio.run(composed.aclose())

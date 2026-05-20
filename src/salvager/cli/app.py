@@ -157,7 +157,21 @@ def _run_daemon(*, config_path: Path, wishlist_path: Path, env_path: Path) -> No
 
 
 async def _serve(composed: ComposedDaemon) -> None:
-    """Start the daemon, register SIGTERM/SIGINT handlers, and block."""
+    """Start the daemon + the Telegram listener; block until shutdown.
+
+    Two long-lived async tasks run concurrently:
+
+    - ``daemon.serve_until_shutdown_signal()`` — the scheduler-driven
+      poll loop.
+    - ``telegram.listen_callbacks()`` — the Telegram long-poll loop
+      that routes view/skip/snooze (and, eventually, buy) taps to the
+      callback dispatcher.
+
+    SIGTERM/SIGINT triggers a clean shutdown on the daemon AND cancels
+    the listener task; the daemon's drain semantics (FR50, 30s
+    in-flight cap) cover the poll side, and the listener exits on
+    the first ``asyncio.CancelledError`` it sees on its ``await``.
+    """
     from datetime import UTC, datetime
 
     daemon = composed.daemon
@@ -174,11 +188,20 @@ async def _serve(composed: ComposedDaemon) -> None:
     loop = asyncio.get_running_loop()
     # Keep strong refs to the shutdown tasks so they aren't GC'd mid-drain.
     shutdown_tasks: set[asyncio.Task[None]] = set()
+    listener_task = asyncio.create_task(
+        composed.telegram.listen_callbacks(composed.dispatcher.handle),
+        name="telegram_callback_listener",
+    )
 
     def _on_signal(reason: str) -> None:
         task = asyncio.create_task(daemon.shutdown(reason=reason))
         shutdown_tasks.add(task)
         task.add_done_callback(shutdown_tasks.discard)
+        # The listener's long-poll is blocking on Telegram's server-
+        # side timeout; cancelling unblocks it immediately so the
+        # process can exit instead of waiting up to 30 s for the
+        # next get_updates response.
+        listener_task.cancel()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         # Windows event-loops don't support add_signal_handler; on
@@ -190,6 +213,9 @@ async def _serve(composed: ComposedDaemon) -> None:
     try:
         await daemon.serve_until_shutdown_signal()
     finally:
+        listener_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await listener_task
         await daemon.shutdown()
         await composed.aclose()
 
