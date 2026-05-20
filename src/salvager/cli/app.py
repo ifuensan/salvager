@@ -186,10 +186,36 @@ async def _serve(composed: ComposedDaemon) -> None:
 
     await daemon.start()
     loop = asyncio.get_running_loop()
+    log = get_logger("daemon")
     # Keep strong refs to the shutdown tasks so they aren't GC'd mid-drain.
     shutdown_tasks: set[asyncio.Task[None]] = set()
+
+    async def _listener_supervisor() -> None:
+        """Run the Telegram listener under a catch-all.
+
+        A non-retryable Telegram failure (invalid bot token, bot
+        kicked) would otherwise propagate through the task and
+        either trip Python's "Task exception was never retrieved"
+        warning at GC time OR — worse — re-raise during cleanup and
+        skip ``daemon.shutdown()`` + the SQLite ``aclose()`` (data
+        flush). The daemon keeps polling (outbound alerts still
+        work and will surface the same auth failure with their own
+        loud log), the operator sees the error in the log stream,
+        and the listener stops cleanly without dragging the rest
+        of the daemon down with it.
+        """
+        try:
+            await composed.telegram.listen_callbacks(composed.dispatcher.handle)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error(
+                "telegram_listener_terminated",
+                extra={"error_class": exc.__class__.__name__, "detail": str(exc)},
+            )
+
     listener_task = asyncio.create_task(
-        composed.telegram.listen_callbacks(composed.dispatcher.handle),
+        _listener_supervisor(),
         name="telegram_callback_listener",
     )
 
@@ -214,6 +240,10 @@ async def _serve(composed: ComposedDaemon) -> None:
         await daemon.serve_until_shutdown_signal()
     finally:
         listener_task.cancel()
+        # The supervisor coroutine guarantees this only ever completes
+        # via CancelledError or clean return (no other exception types
+        # propagate). Suppressing CancelledError covers the typical
+        # cancel-on-shutdown path; clean return needs no handling.
         with contextlib.suppress(asyncio.CancelledError):
             await listener_task
         await daemon.shutdown()
