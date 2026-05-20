@@ -380,7 +380,15 @@ def _comp_summary_line(results: list[_SearchResult]) -> str | None:
     comp_prices = sorted(r.listing.price_eur for r in results if r.listing.is_reserved)
     if not comp_prices:
         return None
-    median = comp_prices[len(comp_prices) // 2]
+    # For an even-length list the "median" is the average of the two
+    # central values, not the upper-middle pick — using the index alone
+    # would print a "median" that equals the max for a 2-element list
+    # (caught by Devin on PR #7).
+    mid = len(comp_prices) // 2
+    if len(comp_prices) % 2:
+        median = comp_prices[mid]
+    else:
+        median = (comp_prices[mid - 1] + comp_prices[mid]) / 2
     return (
         f"{len(comp_prices)} reserved listing(s) used as comps: "
         f"min {_format_price(comp_prices[0])}, "

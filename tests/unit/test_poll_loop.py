@@ -381,7 +381,9 @@ async def test_reserved_listings_skip_eval_record_seen_and_emit_comp_log(
     comp_logs = [r for r in records if r["event"] == "reserved_comps_observed"]
     assert len(comp_logs) == 1
     assert comp_logs[0]["reserved_count"] == 2
-    assert sorted(comp_logs[0]["comp_prices_eur"]) == ["230.00", "80.00"]
+    # Set comparison — log emission preserves insertion order but the
+    # test only cares which prices got captured, not their order.
+    assert set(comp_logs[0]["comp_prices_eur"]) == {"80.00", "230.00"}
 
 
 async def test_only_reserved_listings_skips_eval_and_no_alerts() -> None:
