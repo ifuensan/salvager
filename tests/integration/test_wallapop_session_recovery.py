@@ -51,7 +51,7 @@ def _listing(listing_id: str) -> Listing:
 
 def _query() -> SearchQuery:
     return SearchQuery(
-        keywords=["wd red plus 4tb"],
+        keyword="wd red plus 4tb",
         marketplace="wallapop",
         max_price_eur=Decimal("70"),
     )

@@ -81,14 +81,14 @@ def test_listing_entry_key_match_accepts_tuple() -> None:
     )
 
 
-def test_search_query_requires_keywords() -> None:
+def test_search_query_requires_keyword() -> None:
     with pytest.raises(ValidationError):
-        SearchQuery(keywords=[], marketplace="wallapop")
+        SearchQuery(keyword="", marketplace="wallapop")
 
 
 def test_search_query_accepts_max_price() -> None:
     q = SearchQuery(
-        keywords=["WD Red Plus 4TB"],
+        keyword="WD Red Plus 4TB",
         marketplace="ebay",
         max_price_eur=Decimal("90.00"),
     )

@@ -184,9 +184,7 @@ async def test_search_replays_fixture_into_two_listings(tmp_path: Path) -> None:
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
-        listings = await fetcher.search(
-            SearchQuery(keywords=["WD Red Plus 4TB"], marketplace="ebay")
-        )
+        listings = await fetcher.search(SearchQuery(keyword="WD Red Plus 4TB", marketplace="ebay"))
     finally:
         await fetcher.aclose()
 
@@ -217,7 +215,7 @@ async def test_search_succeeded_log_carries_quota_remaining(
 
     fetcher = _build_fetcher(tmp_path, handler, quota_budget=5)
     try:
-        await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+        await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
     finally:
         await fetcher.aclose()
 
@@ -245,11 +243,11 @@ async def test_quota_breach_raises_before_any_http_call(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler, quota_budget=1)
     try:
         # Burn the only allowed request.
-        await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+        await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
         # The next call should raise BEFORE hitting the transport.
         before = len(calls)
         with pytest.raises(EbayQuotaExceeded) as excinfo:
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
         assert len(calls) == before  # no new HTTP request issued
         assert excinfo.value.used == 1
         assert excinfo.value.budget == 1
@@ -293,7 +291,7 @@ async def test_token_near_expiry_triggers_refresh(tmp_path: Path) -> None:
     # Token expires in 60 seconds — triggers refresh.
     fetcher = _build_fetcher(tmp_path, handler, expires_in_seconds=60)
     try:
-        await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+        await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
     finally:
         await fetcher.aclose()
 
@@ -314,7 +312,7 @@ async def test_refresh_401_raises_ebay_auth_failed(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler, expires_in_seconds=60)
     try:
         with pytest.raises(EbayAuthFailed):
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
     finally:
         await fetcher.aclose()
 
@@ -332,7 +330,7 @@ async def test_http_500_raises_api_error(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         with pytest.raises(EbayApiError) as excinfo:
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
     finally:
         await fetcher.aclose()
     assert excinfo.value.status_code == 500
@@ -357,7 +355,7 @@ async def test_missing_required_field_raises_schema_drift(tmp_path: Path) -> Non
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         with pytest.raises(EbaySchemaDrift) as excinfo:
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="ebay"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="ebay"))
     finally:
         await fetcher.aclose()
     assert "itemId" in excinfo.value.field_path

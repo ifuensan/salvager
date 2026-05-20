@@ -141,10 +141,28 @@ async def run_poll_cycle(
             )
             continue
 
-        query = _build_search_query(entry, marketplace)
-        try:
-            listings = await fetcher.search(query)
-        except Exception as exc:
+        queries = _build_search_queries(entry, marketplace)
+        listings_by_id: dict[str, Listing] = {}
+        keyword_failures = 0
+        for query in queries:
+            try:
+                sub_listings = await fetcher.search(query)
+            except Exception as exc:
+                keyword_failures += 1
+                log.error(
+                    "poll_keyword_fetch_failed",
+                    extra={
+                        "marketplace": marketplace,
+                        "entry_display_name": entry.display_name,
+                        "keyword": query.keyword,
+                        "error_class": exc.__class__.__name__,
+                    },
+                )
+                continue
+            for listing in sub_listings:
+                listings_by_id.setdefault(listing.listing_id, listing)
+        if keyword_failures == len(queries):
+            # Every keyword failed → entry is unreachable this cycle.
             summary.errors += 1
             summary.failed_entries.append(entry.display_name)
             log.error(
@@ -152,10 +170,11 @@ async def run_poll_cycle(
                 extra={
                     "marketplace": marketplace,
                     "entry_display_name": entry.display_name,
-                    "error_class": exc.__class__.__name__,
+                    "keyword_count": len(queries),
                 },
             )
             continue
+        listings = list(listings_by_id.values())
 
         summary.result_count += len(listings)
         candidates = await _filter_unseen(listings, entry, store)
@@ -270,12 +289,19 @@ async def run_poll_cycle(
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _build_search_query(entry: WishlistEntry, marketplace: Marketplace) -> SearchQuery:
-    return SearchQuery(
-        keywords=list(entry.keywords) or [entry.model],
-        marketplace=marketplace,
-        max_price_eur=entry.max_price_solo or entry.max_price_in_device,
-    )
+def _build_search_queries(entry: WishlistEntry, marketplace: Marketplace) -> list[SearchQuery]:
+    """Fan a wishlist entry out into one search per keyword phrase.
+
+    The entry's ``keywords`` list is treated as alternative phrases —
+    each becomes its own marketplace search; ``run_poll_cycle`` unions
+    + de-dupes the results by ``listing_id``. Falls back to the entry's
+    canonical ``model`` when the wishlist omits ``keywords``.
+    """
+    keywords = list(entry.keywords) or [entry.model]
+    max_price = entry.max_price_solo or entry.max_price_in_device
+    return [
+        SearchQuery(keyword=kw, marketplace=marketplace, max_price_eur=max_price) for kw in keywords
+    ]
 
 
 async def _filter_unseen(

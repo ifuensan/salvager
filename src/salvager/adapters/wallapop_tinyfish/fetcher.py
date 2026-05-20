@@ -264,8 +264,7 @@ def _default_rate_limiter(per_minute: int) -> SlidingWindowRateLimiter:
 
 def _build_search_url(query: SearchQuery) -> str:
     """Construct the Wallapop SPA URL the TinyFish agent navigates to."""
-    keywords = " ".join(query.keywords)
-    parts = [f"keywords={quote_plus(keywords)}"]
+    parts = [f"keywords={quote_plus(query.keyword)}"]
     if query.max_price_eur is not None:
         parts.append(f"max_sale_price={query.max_price_eur}")
     return f"{_SEARCH_BASE_URL}?{'&'.join(parts)}"

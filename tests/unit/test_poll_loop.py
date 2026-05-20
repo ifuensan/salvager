@@ -497,8 +497,8 @@ async def test_fetch_failure_for_one_entry_does_not_kill_cycle() -> None:
             self.calls: list[str] = []
 
         async def search(self, query: SearchQuery) -> list[Listing]:
-            self.calls.append(query.keywords[0])
-            if "FAIL-FETCH-MARKER" in query.keywords:
+            self.calls.append(query.keyword)
+            if "FAIL-FETCH-MARKER" in query.keyword:
                 raise RuntimeError("transient network error")
             return [_listing()]
 
@@ -905,3 +905,124 @@ def test_poll_loop_does_not_import_adapters() -> None:
             if module.startswith("salvager.adapters"):
                 offenders.append(f"from {module} import ...")
     assert not offenders, "poll_loop imported an adapter:\n  " + "\n  ".join(offenders)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Keyword fan-out — each wishlist keyword fires its own search; results
+# are unioned + de-duped by listing_id. Regression for the prior bug
+# where `keywords=["A", "B"]` was joined into a single "A B" query that
+# tokenized at the marketplace as AND and matched nothing.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_fan_out_runs_one_search_per_keyword() -> None:
+    entry = _entry(keywords=["Ultrastar 14TB", "WUH721414", "WD 14TB HC530"])
+    fetcher = _FakeFetcher(response=[_listing()])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        fetcher=fetcher,
+        evaluator=evaluator,
+        store=store,
+        telegram=telegram,
+        clock=_utc_t0,
+        new_alert_id=_fixed_uuid,
+    )
+
+    issued = [q.keyword for q in fetcher.search_calls]
+    assert issued == ["Ultrastar 14TB", "WUH721414", "WD 14TB HC530"]
+
+
+async def test_fan_out_dedups_overlapping_listings_by_id() -> None:
+    entry = _entry(keywords=["kw1", "kw2"])
+    shared = _listing("shared", title="shared")
+    unique_to_kw2 = _listing("unique2", title="unique2")
+
+    class _SwitchingFetcher(PageFetcher):
+        def __init__(self) -> None:
+            self.search_calls: list[SearchQuery] = []
+
+        async def search(self, query: SearchQuery) -> list[Listing]:
+            self.search_calls.append(query)
+            if query.keyword == "kw1":
+                return [shared]
+            return [shared, unique_to_kw2]  # `shared` overlaps, must be deduped
+
+        async def fetch(self, listing_url: str) -> Listing:
+            raise AssertionError
+
+    fetcher = _SwitchingFetcher()
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        fetcher=fetcher,
+        evaluator=_FakeEvaluator(),
+        store=_FakeStore(),
+        telegram=_FakeTelegram(),
+        clock=_utc_t0,
+        new_alert_id=_fixed_uuid,
+    )
+
+    # Two fetcher calls, three raw hits, two unique listing_ids after dedup.
+    assert len(fetcher.search_calls) == 2
+    assert summary.result_count == 2
+
+
+async def test_partial_keyword_failure_keeps_entry_alive() -> None:
+    """One keyword erroring out must not lose the other keyword's hits."""
+    entry = _entry(keywords=["good-kw", "bad-kw"])
+    good_listing = _listing("good", title="good")
+
+    class _FailingFetcher(PageFetcher):
+        def __init__(self) -> None:
+            self.search_calls: list[SearchQuery] = []
+
+        async def search(self, query: SearchQuery) -> list[Listing]:
+            self.search_calls.append(query)
+            if query.keyword == "bad-kw":
+                raise RuntimeError("transient")
+            return [good_listing]
+
+        async def fetch(self, listing_url: str) -> Listing:
+            raise AssertionError
+
+    fetcher = _FailingFetcher()
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        fetcher=fetcher,
+        evaluator=_FakeEvaluator(),
+        store=_FakeStore(),
+        telegram=_FakeTelegram(),
+        clock=_utc_t0,
+        new_alert_id=_fixed_uuid,
+    )
+
+    assert len(fetcher.search_calls) == 2
+    # Entry not marked failed — partial success.
+    assert summary.errors == 0
+    assert summary.failed_entries == []
+    assert summary.result_count == 1
+
+
+async def test_all_keywords_failing_marks_entry_failed() -> None:
+    entry = _entry(keywords=["kw1", "kw2"])
+    fetcher = _FakeFetcher(response=RuntimeError("dead"))
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        fetcher=fetcher,
+        evaluator=_FakeEvaluator(),
+        store=_FakeStore(),
+        telegram=_FakeTelegram(),
+        clock=_utc_t0,
+        new_alert_id=_fixed_uuid,
+    )
+
+    assert summary.errors == 1
+    assert summary.failed_entries == [entry.display_name]
