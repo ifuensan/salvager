@@ -291,6 +291,33 @@ async def test_skip_records_audit_and_edits_to_saltado_row() -> None:
     assert surface.edits[-1][1][0][0].text == "✓ saltado"
 
 
+async def test_phase1_callbacks_emit_callback_handled_log_with_verb_and_alert_id(
+    capsys: Any,
+) -> None:
+    """The Phase 1 happy path (view/skip/snooze) was silent on stdout
+    pre-Story 4.x — the only signal an operator had that the daemon
+    was actually processing taps was the SQLite ``callbacks`` table.
+    The first live smoke test (Phase 1 daemon, 2026-05-20) made the
+    daemon feel broken even when it wasn't. This test pins the log
+    line so a future regression that drops it fails loudly.
+    """
+    snapshot = _make_snapshot()
+    store = _FakeStore()
+    store.snapshots[snapshot.alert_id] = snapshot
+    surface = _FakeSurface()
+    dispatcher = _make_dispatcher(store, surface)
+
+    event = _callback_event(verb="view", alert_id=snapshot.alert_id)
+    await dispatcher.handle(event)
+
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    handled = [r for r in records if r["event"] == "callback_handled"]
+    assert handled, f"missing callback_handled log line in {records!r}"
+    assert handled[0]["verb"] == "view"
+    assert handled[0]["alert_id"] == str(snapshot.alert_id)
+    assert handled[0]["telegram_message_id"] == event.message_id
+
+
 async def test_snooze_writes_snooze_until_and_edits_to_pospuesto_row() -> None:
     snapshot = _make_snapshot()
     store = _FakeStore()

@@ -159,6 +159,21 @@ class CallbackDispatcher:
             event.message_id,
             _acknowledgment_keyboard(event.verb, alert_id),
         )
+        # Observability: the previous code logged only failures (unknown
+        # verb / malformed callback_data) and the Phase 2 buy branch.
+        # view/skip/snooze landed silently — the only signal an operator
+        # had that the daemon was actually processing taps was the
+        # SQLite ``callbacks`` table. Surfaced after the first live
+        # smoke test: green keyboard + green audit row + zero log lines
+        # made the daemon feel broken even when it wasn't.
+        self._log.info(
+            "callback_handled",
+            extra={
+                "verb": event.verb,
+                "alert_id": str(alert_id),
+                "telegram_message_id": event.message_id,
+            },
+        )
 
     async def _handle_buy(self, event: CallbackEvent, alert_id: UUID) -> None:
         """Phase 2 buy verb: in-flight badge + fire-and-forget orchestrator."""
