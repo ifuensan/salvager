@@ -27,6 +27,19 @@ from typing import Any, Final
 #: How often the driver polls the browser context for the session cookie.
 _POLL_INTERVAL_S: Final[float] = 1.0
 
+#: Wallapop ships ConsentManager's CMP banner on first visit (logo's
+#: src is hosted at cdn.consentmanager.net — verified 2026-05-19
+#: against es.wallapop.com). The "Aceptar todo" affordance is an
+#: ``<a class="cmpboxbtn cmpboxbtnyes" role="button">`` wrapped in
+#: ``<span id="cmpwelcomebtnyes">``. We target the anchor by its
+#: ConsentManager-product class, which is stable across the CMP's
+#: customers (Wallapop's own frontend churns weekly; the third-party
+#: CMP markup doesn't). If the banner isn't there or the markup
+#: shifts, the click silently times out and the operator falls back
+#: to clicking it manually — no regression.
+_COOKIE_BANNER_SELECTOR: Final[str] = "a.cmpboxbtnyes"
+_COOKIE_BANNER_TIMEOUT_MS: Final[float] = 5000.0
+
 #: Cookie names that, once set with a non-empty value, prove the browser
 #: holds an authenticated Wallapop session. Polling stops as soon as ANY
 #: of these is observed.
@@ -98,9 +111,26 @@ async def capture_wallapop_cookies(login_url: str, timeout_s: float) -> list[Coo
             context = await browser.new_context()
             page = await context.new_page()
             await page.goto(login_url)
+            await _dismiss_cookie_banner(page)
             return await _wait_for_session_cookie(context, timeout_s)
         finally:
             await browser.close()
+
+
+async def _dismiss_cookie_banner(page: Any) -> None:
+    """Click Wallapop's ConsentManager 'Accept all' button if present.
+
+    Best-effort: a missing banner / changed selector / page-navigation
+    race all swallow into a silent timeout. The login flow still works
+    without it; this just spares the operator one click.
+    """
+    try:
+        await page.click(
+            _COOKIE_BANNER_SELECTOR,
+            timeout=_COOKIE_BANNER_TIMEOUT_MS,
+        )
+    except Exception:
+        return
 
 
 async def _wait_for_session_cookie(context: Any, timeout_s: float) -> list[CookieDict]:
