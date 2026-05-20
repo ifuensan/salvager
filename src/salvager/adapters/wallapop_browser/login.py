@@ -118,7 +118,7 @@ async def capture_wallapop_cookies(login_url: str, timeout_s: float) -> list[Coo
 
 
 async def _dismiss_cookie_banner(page: Any) -> None:
-    """Click Wallapop's OneTrust 'Accept all' button if present.
+    """Click Wallapop's ConsentManager 'Accept all' button if present.
 
     Best-effort: a missing banner / changed selector / page-navigation
     race all swallow into a silent timeout. The login flow still works
