@@ -627,6 +627,38 @@ async def test_listen_callbacks_retries_on_transient_get_updates_failure() -> No
 
 
 @pytest.mark.asyncio
+async def test_listen_callbacks_raises_delivery_failed_when_retry_delays_empty() -> None:
+    """``retry_delays=()`` opts out of retries (matches ``send()``).
+
+    Before the fix from PR #8, this case crashed the listener with an
+    IndexError because the indexing used ``len(()) - 1 == -1`` and
+    ``()[-1]`` raises. Behaviour now matches the send path: a
+    retryable error with no retries to give surfaces as
+    ``TelegramDeliveryFailed``, which the supervisor in ``_serve``
+    catches and logs.
+    """
+
+    class _AlwaysFlakyBot(_FakeBot):
+        async def get_updates(
+            self,
+            offset: int | None = None,
+            limit: int | None = None,
+            timeout: int | None = None,
+            allowed_updates: list[str] | None = None,
+        ) -> list[Any]:
+            raise _NetworkError("transient")
+
+    bot = _AlwaysFlakyBot()
+    surface, _ = _build_surface(bot, chat_id=12345, retry_delays=())
+
+    async def _handler(_event: Any) -> None:
+        pass
+
+    with pytest.raises(TelegramDeliveryFailed):
+        await surface.listen_callbacks(_handler)
+
+
+@pytest.mark.asyncio
 async def test_listen_callbacks_raises_config_error_on_non_retryable_failure() -> None:
     """A 4xx-class error (e.g. invalid token) is not a transient
     blip — bubble it up so the daemon surfaces it loudly instead of

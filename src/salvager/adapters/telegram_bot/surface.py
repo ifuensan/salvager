@@ -244,6 +244,19 @@ class TelegramBotSurface(TelegramSurface):
             try:
                 updates = await self._invoke_get_updates(offset=offset)
             except _RetryableTelegramError as exc:
+                if not self._retry_delays:
+                    # `retry_delays=()` opts out of retries entirely
+                    # (matches the send() semantics). Without this
+                    # guard, indexing an empty tuple at ``-1`` would
+                    # crash the listener loop on the first transient
+                    # blip — caught by Devin on PR #8.
+                    self._log.error(
+                        "telegram_listen_failed_no_retries_configured",
+                        extra={"error_class": exc.original.__class__.__name__},
+                    )
+                    raise TelegramDeliveryFailed(
+                        f"get_updates failed (no retries configured): {exc.original}"
+                    ) from exc.original
                 delay = self._retry_delays[min(backoff_index, len(self._retry_delays) - 1)]
                 self._log.warning(
                     "telegram_get_updates_retry",
