@@ -52,6 +52,14 @@ def test_listing_accepts_minimum_valid_payload() -> None:
     assert listing.price_eur == Decimal("55.00")
     assert listing.entry_key_match is None  # default until evaluated
     assert listing.photo_urls == []
+    # Reservation defaults to False so existing adapters that don't
+    # populate the field still produce buyable Listing instances.
+    assert listing.is_reserved is False
+
+
+def test_listing_reserved_flag_accepts_true() -> None:
+    listing = _valid_listing(is_reserved=True)
+    assert listing.is_reserved is True
 
 
 def test_listing_unknown_field_rejected() -> None:

@@ -28,6 +28,12 @@ class Listing(BaseModel):
     ``entry_key_match`` is the wishlist entry the LLM evaluator decided
     this listing matches; it is None until evaluation runs and is the
     join column for ``alert_snapshots`` and the SQLite dedup index.
+
+    ``is_reserved`` distinguishes listings the operator can still buy
+    (False) from those that have been marked unavailable by the seller
+    (True). Reserved listings remain useful as price comps — they
+    capture "what someone was willing to pay" — but they never trigger
+    buy alerts, since the inventory is gone.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -44,6 +50,7 @@ class Listing(BaseModel):
     seller_history_count: int | None = None
     published_at: datetime | None = None
     fetched_at: datetime
+    is_reserved: bool = False
 
     # Set by the LLM evaluator; None pre-evaluation.
     entry_key_match: tuple[str, str, str] | None = None

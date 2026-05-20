@@ -84,6 +84,9 @@ class PollCycleSummary:
 
     Counter names mirror the AC fields verbatim so the structured-log
     record's ``extra={...}`` body matches the schema operators read.
+    ``reserved_count`` tracks the new-but-not-buyable subset (sellers
+    flagged them as taken before we polled); they're recorded as seen
+    and treated as price comps but never reach the evaluator.
     """
 
     marketplace: Marketplace
@@ -91,6 +94,7 @@ class PollCycleSummary:
     new_count: int = 0
     alerts_sent: int = 0
     dropped_count: int = 0
+    reserved_count: int = 0
     snoozed_entries: int = 0
     errors: int = 0
     latency_ms: int = 0
@@ -160,7 +164,31 @@ async def run_poll_cycle(
         if not candidates:
             continue
 
-        evaluations = await _evaluate_concurrently(candidates, entry, evaluator, semaphore, log)
+        # Split reserved (no longer buyable) from buyable. Reserved
+        # listings are still useful as price comps for the operator
+        # (what someone was willing to pay) but they must never reach
+        # the evaluator (LLM cost on dead inventory) or the alert path
+        # (operator can't buy a sold listing). Record them as seen so
+        # they don't reprocess every cycle.
+        buyable, reserved = _split_reserved(candidates)
+        summary.reserved_count += len(reserved)
+        if reserved:
+            comp_prices = [r.price_eur for r in reserved]
+            log.info(
+                "reserved_comps_observed",
+                extra={
+                    "marketplace": marketplace,
+                    "entry_display_name": entry.display_name,
+                    "reserved_count": len(reserved),
+                    "comp_prices_eur": [str(p) for p in comp_prices],
+                },
+            )
+            await _record_reserved_as_seen(reserved, entry, store, summary, log)
+
+        if not buyable:
+            continue
+
+        evaluations = await _evaluate_concurrently(buyable, entry, evaluator, semaphore, log)
 
         for listing, evaluation in evaluations:
             if evaluation is None:
@@ -228,6 +256,7 @@ async def run_poll_cycle(
             "new_count": summary.new_count,
             "alerts_sent": summary.alerts_sent,
             "dropped_count": summary.dropped_count,
+            "reserved_count": summary.reserved_count,
             "snoozed_entries": summary.snoozed_entries,
             "errors": summary.errors,
             "latency_ms": summary.latency_ms,
@@ -262,6 +291,49 @@ async def _filter_unseen(
             continue
         unseen.append(listing)
     return unseen
+
+
+def _split_reserved(listings: list[Listing]) -> tuple[list[Listing], list[Listing]]:
+    """Partition ``listings`` into ``(buyable, reserved)``.
+
+    Two lists rather than a filter so the caller can keep the reserved
+    set for downstream uses (comp pricing, log fan-out) without a
+    second pass.
+    """
+    buyable: list[Listing] = []
+    reserved: list[Listing] = []
+    for listing in listings:
+        (reserved if listing.is_reserved else buyable).append(listing)
+    return buyable, reserved
+
+
+async def _record_reserved_as_seen(
+    reserved: list[Listing],
+    entry: WishlistEntry,
+    store: Store,
+    summary: PollCycleSummary,
+    log: object,
+) -> None:
+    """Mark reserved listings as seen so they don't reprocess each cycle.
+
+    A persistence failure increments ``summary.errors`` and gets a
+    structured log; the cycle moves on. Same shape as the post-eval
+    ``record_seen`` call site so operators reading audit logs see
+    consistent error_class values for "failed to mark seen".
+    """
+    for listing in reserved:
+        try:
+            await store.record_seen(listing, entry.entry_key)
+        except Exception as exc:
+            summary.errors += 1
+            log.error(  # type: ignore[attr-defined]
+                "poll_record_seen_failed",
+                extra={
+                    "listing_id": listing.listing_id,
+                    "error_class": exc.__class__.__name__,
+                    "reason": "reserved",
+                },
+            )
 
 
 async def _evaluate_concurrently(

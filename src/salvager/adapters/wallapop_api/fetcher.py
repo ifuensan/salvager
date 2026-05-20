@@ -303,6 +303,7 @@ def _item_to_listing(item: WallapopApiItem) -> Listing:
         seller_history_count=None,
         published_at=_unix_millis_to_dt(item.created_at),
         fetched_at=datetime.now(UTC),
+        is_reserved=bool(item.reserved and item.reserved.flag),
     )
 
 

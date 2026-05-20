@@ -283,6 +283,80 @@ def test_evaluate_flag_runs_the_llm(
 # ─────────────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Comp summary line — Layer 2 reserved-as-comp surface
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _result(listing_id: str, *, price: Decimal, is_reserved: bool) -> Any:
+    """Build a ``_SearchResult`` with the fields the comp summary reads."""
+    return test_search_cmd._SearchResult(
+        marketplace="wallapop",
+        listing=_listing(listing_id).model_copy(
+            update={"price_eur": price, "is_reserved": is_reserved}
+        ),
+        match_probability=0.0,
+    )
+
+
+def test_comp_summary_line_skipped_when_no_reserved() -> None:
+    """No reserved listings → no comp line. Avoids a stray empty line
+    of output in the common case (operator sees a clean table)."""
+    results = [_result("a", price=Decimal("55.00"), is_reserved=False)]
+    assert test_search_cmd._comp_summary_line(results) is None
+
+
+def test_comp_summary_line_single_reserved_uses_single_value() -> None:
+    results = [_result("a", price=Decimal("80.00"), is_reserved=True)]
+    line = test_search_cmd._comp_summary_line(results)
+    assert line is not None
+    assert "1 reserved listing(s)" in line
+    assert "min 80.00 EUR" in line
+    assert "median 80.00 EUR" in line
+    assert "max 80.00 EUR" in line
+
+
+def test_comp_summary_line_even_count_averages_the_two_middles() -> None:
+    """Regression guard for the index-only median bug (caught on PR #7):
+    a 2-element list would otherwise show ``median == max``.
+    """
+    results = [
+        _result("a", price=Decimal("80.00"), is_reserved=True),
+        _result("b", price=Decimal("230.00"), is_reserved=True),
+    ]
+    line = test_search_cmd._comp_summary_line(results)
+    assert line is not None
+    assert "min 80.00 EUR" in line
+    # (80 + 230) / 2 = 155
+    assert "median 155.00 EUR" in line
+    assert "max 230.00 EUR" in line
+
+
+def test_comp_summary_line_odd_count_picks_middle() -> None:
+    results = [
+        _result("a", price=Decimal("50.00"), is_reserved=True),
+        _result("b", price=Decimal("100.00"), is_reserved=True),
+        _result("c", price=Decimal("200.00"), is_reserved=True),
+    ]
+    line = test_search_cmd._comp_summary_line(results)
+    assert line is not None
+    assert "median 100.00 EUR" in line
+
+
+def test_comp_summary_line_ignores_non_reserved_in_stats() -> None:
+    """The buyable listing's price must not pollute the comp summary."""
+    results = [
+        _result("buyable", price=Decimal("9999.00"), is_reserved=False),
+        _result("res-a", price=Decimal("80.00"), is_reserved=True),
+        _result("res-b", price=Decimal("230.00"), is_reserved=True),
+    ]
+    line = test_search_cmd._comp_summary_line(results)
+    assert line is not None
+    assert "9999" not in line
+    assert "min 80.00 EUR" in line
+    assert "median 155.00 EUR" in line
+
+
 def test_arbitrary_query_is_passed_verbatim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

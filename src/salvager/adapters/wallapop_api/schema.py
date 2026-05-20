@@ -67,6 +67,20 @@ class WallapopApiImage(BaseModel):
     urls: WallapopApiImageUrls = Field(default_factory=WallapopApiImageUrls)
 
 
+class WallapopApiReserved(BaseModel):
+    """Wallapop wraps the reserved-flag in a tiny object: ``{"flag": bool}``.
+
+    Mapping into ``Listing.is_reserved`` happens in the fetcher; here
+    we just parse the envelope so the boolean is reachable. A missing
+    ``reserved`` object on the upstream item is normal (older listings,
+    forward-compat) and treated as not-reserved.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    flag: bool = False
+
+
 class WallapopApiItem(BaseModel):
     """One result row from the v3 search-section endpoint.
 
@@ -88,6 +102,7 @@ class WallapopApiItem(BaseModel):
     price: WallapopApiPrice
     location: WallapopApiLocation | None = None
     images: list[WallapopApiImage] = Field(default_factory=list)
+    reserved: WallapopApiReserved | None = None
     web_slug: str | None = None
     #: Unix milliseconds. ``None`` is tolerated for forward-compat,
     #: but the live API always emits it.

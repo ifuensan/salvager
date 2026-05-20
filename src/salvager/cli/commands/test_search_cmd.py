@@ -252,7 +252,10 @@ async def _search_one(
             listing=listing,
             match_probability=_match_probability(listing, keywords),
         )
-        if evaluator is not None and entry is not None:
+        # Reserved listings are still rendered (they're useful comps for
+        # the operator) but we skip the LLM evaluator on them — the
+        # eval cost would buy nothing since the inventory is gone.
+        if evaluator is not None and entry is not None and not listing.is_reserved:
             try:
                 evaluation = await evaluator.evaluate(listing, entry)
                 result.confidence = evaluation.confidence
@@ -330,6 +333,7 @@ def _render(
         {"key": "listing_id", "header": "Listing ID"},
         {"key": "title", "header": "Title"},
         {"key": "price", "header": "Price"},
+        {"key": "reserved", "header": "Reserved"},
         {"key": "match_probability", "header": "Match Probability"},
     ]
     if evaluate:
@@ -343,6 +347,7 @@ def _render(
             "listing_id": r.listing.listing_id,
             "title": r.listing.title,
             "price": _format_price(r.listing.price_eur),
+            "reserved": "✓" if r.listing.is_reserved else "",
             "match_probability": f"{r.match_probability:.2f}",
             "confidence": r.confidence,
             "one_line_take": r.one_line_take,
@@ -352,11 +357,44 @@ def _render(
     table = render_table(rows, columns, width=width)
     _print_table(table, width=width)
 
+    comp_note = _comp_summary_line(outcome.results)
+    if comp_note is not None:
+        render_prose(comp_note, style="secondary")
+
     if not evaluate:
         render_prose(
             "dry-run heuristic only — no LLM evaluation; pass --evaluate for confidence + take",
             style="secondary",
         )
+
+
+def _comp_summary_line(results: list[_SearchResult]) -> str | None:
+    """One-line summary of comp prices from reserved listings, or None.
+
+    Sellers flag listings reserved when they're no longer for sale but
+    still on the marketplace — those carry useful signal about the
+    going rate. We surface min/median/max here so the operator can
+    eyeball whether a buyable listing's price is reasonable without
+    having to scan the table by hand.
+    """
+    comp_prices = sorted(r.listing.price_eur for r in results if r.listing.is_reserved)
+    if not comp_prices:
+        return None
+    # For an even-length list the "median" is the average of the two
+    # central values, not the upper-middle pick — using the index alone
+    # would print a "median" that equals the max for a 2-element list
+    # (caught by Devin on PR #7).
+    mid = len(comp_prices) // 2
+    if len(comp_prices) % 2:
+        median = comp_prices[mid]
+    else:
+        median = (comp_prices[mid - 1] + comp_prices[mid]) / 2
+    return (
+        f"{len(comp_prices)} reserved listing(s) used as comps: "
+        f"min {_format_price(comp_prices[0])}, "
+        f"median {_format_price(median)}, "
+        f"max {_format_price(comp_prices[-1])}"
+    )
 
 
 def _result_to_json(result: _SearchResult, *, evaluate: bool) -> dict[str, Any]:

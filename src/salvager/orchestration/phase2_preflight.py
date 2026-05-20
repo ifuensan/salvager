@@ -72,6 +72,12 @@ class Phase2Preflight:
         # ── Per-entry checks (no DB round-trip) ──────────────────────
         if not entry.phase2.enabled:
             return Phase2EligibilityResult(False, "phase2_disabled_for_entry")
+        # Reserved listings are no longer buyable inventory — let them
+        # fall back to Phase 1 (alert-only) so the operator still sees
+        # market signal, but never under a Buy CTA they'd tap into a
+        # 404. Cheapest check, runs before any DB read.
+        if listing.is_reserved:
+            return Phase2EligibilityResult(False, "listing_reserved")
         max_price: Decimal | None = entry.phase2.max_price_eur
         if max_price is None:
             return Phase2EligibilityResult(False, "phase2_max_price_unset")
