@@ -135,18 +135,21 @@ def _resolve_entry(query_or_entry: str, wishlist: Wishlist) -> WishlistEntry | N
     return next((e for e in wishlist.entries if e.ref == query_or_entry), None)
 
 
-def _build_query(
+def _build_queries(
     entry: WishlistEntry | None,
     raw_query: str,
     marketplace: Marketplace,
-) -> SearchQuery:
+) -> list[SearchQuery]:
+    """Mirror ``poll_loop._build_search_queries`` — one query per keyword."""
     if entry is not None:
         keywords = list(entry.keywords) or [entry.model]
         max_price = entry.max_price_solo or entry.max_price_in_device
     else:
         keywords = [raw_query]
         max_price = None
-    return SearchQuery(keywords=keywords, marketplace=marketplace, max_price_eur=max_price)
+    return [
+        SearchQuery(keyword=kw, marketplace=marketplace, max_price_eur=max_price) for kw in keywords
+    ]
 
 
 def _heuristic_keywords(entry: WishlistEntry | None, raw_query: str) -> list[str]:
@@ -235,16 +238,30 @@ async def _search_one(
     evaluator: ListingEvaluator | None,
     outcome: _Outcome,
 ) -> None:
-    query = _build_query(entry, raw_query, market)
-    try:
-        listings = await fetcher.search(query)
-    except (TinyFishRateLimited, LlmRateLimited):
-        outcome.rate_limited = True
-        outcome.notes.append(f"{market}: rate limited — partial or no results")
+    queries = _build_queries(entry, raw_query, market)
+    listings_by_id: dict[str, Listing] = {}
+    keyword_failures = 0
+    for query in queries:
+        try:
+            sub_listings = await fetcher.search(query)
+        except (TinyFishRateLimited, LlmRateLimited):
+            outcome.rate_limited = True
+            outcome.notes.append(
+                f"{market}: rate limited on keyword {query.keyword!r} — partial results"
+            )
+            keyword_failures += 1
+            continue
+        except MarketplaceError as exc:
+            outcome.notes.append(
+                f"{market}: search failed on keyword {query.keyword!r} ({exc.__class__.__name__})"
+            )
+            keyword_failures += 1
+            continue
+        for listing in sub_listings:
+            listings_by_id.setdefault(listing.listing_id, listing)
+    if keyword_failures == len(queries):
         return
-    except MarketplaceError as exc:
-        outcome.notes.append(f"{market}: search failed ({exc.__class__.__name__})")
-        return
+    listings = list(listings_by_id.values())
 
     for listing in listings:
         result = _SearchResult(

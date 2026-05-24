@@ -98,7 +98,7 @@ class EbayApiFetcher(PageFetcher):
         await self._maybe_refresh()
 
         params: dict[str, Any] = {
-            "q": " ".join(query.keywords),
+            "q": query.keyword,
             "limit": "100",
         }
         if query.max_price_eur is not None:

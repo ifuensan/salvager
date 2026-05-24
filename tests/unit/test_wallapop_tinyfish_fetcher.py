@@ -11,13 +11,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 from pydantic import SecretStr
 from tinyfish import (
     AgentRunResponse,
+    AsyncTinyFish,
     AuthenticationError,
     PermissionDeniedError,
     RateLimitError,
@@ -108,7 +109,7 @@ def _make_response(
 
 def _query() -> SearchQuery:
     return SearchQuery(
-        keywords=["wd red plus 4tb"],
+        keyword="wd red plus 4tb",
         marketplace="wallapop",
         max_price_eur=Decimal("70"),
     )
@@ -160,7 +161,7 @@ def _make_fetcher(
     client = _FakeClient()
     fetcher = WallapopTinyfishFetcher(
         _FAKE_KEY,
-        client=client,  # type: ignore[arg-type]
+        client=cast(AsyncTinyFish, client),
         rate_limit_per_minute=rate_limit_per_minute,
         rate_limiter=rate_limiter,
     )
@@ -249,7 +250,7 @@ async def test_remote_rate_limit_translates_to_local_exception() -> None:
     # adapter reads body["retry_after"]); the SDK attaches body itself
     # from the response, but for the unit test we patch it directly.
     exc = RateLimitError("rate-limited", response=_fake_response(429))
-    exc.body = {"retry_after": 12}  # type: ignore[attr-defined]
+    cast(Any, exc).body = {"retry_after": 12}
     client.agent.next_exception = exc
 
     with pytest.raises(TinyFishRateLimited) as exc_info:

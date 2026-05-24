@@ -179,7 +179,7 @@ async def test_search_returns_domain_listings(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         listings = await fetcher.search(
-            SearchQuery(keywords=["WD Red Plus 4TB"], marketplace="wallapop")
+            SearchQuery(keyword="WD Red Plus 4TB", marketplace="wallapop")
         )
     finally:
         await fetcher.aclose()
@@ -234,7 +234,7 @@ async def test_search_maps_reserved_flag_to_is_reserved(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         listings = await fetcher.search(
-            SearchQuery(keywords=["WD Red Plus 4TB"], marketplace="wallapop")
+            SearchQuery(keyword="WD Red Plus 4TB", marketplace="wallapop")
         )
     finally:
         await fetcher.aclose()
@@ -256,7 +256,7 @@ async def test_http_401_raises_session_expired(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         with pytest.raises(WallapopSessionExpired):
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="wallapop"))
     finally:
         await fetcher.aclose()
 
@@ -269,7 +269,7 @@ async def test_http_500_raises_api_error_with_status_and_body(tmp_path: Path) ->
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         with pytest.raises(WallapopApiError) as excinfo:
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="wallapop"))
     finally:
         await fetcher.aclose()
 
@@ -288,7 +288,7 @@ async def test_http_429_raises_api_error(tmp_path: Path) -> None:
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         with pytest.raises(WallapopApiError) as excinfo:
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="wallapop"))
     finally:
         await fetcher.aclose()
     assert excinfo.value.status_code == 429
@@ -319,7 +319,7 @@ async def test_missing_required_field_raises_schema_drift(tmp_path: Path) -> Non
     fetcher = _build_fetcher(tmp_path, handler)
     try:
         with pytest.raises(WallapopSchemaDrift) as excinfo:
-            await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
+            await fetcher.search(SearchQuery(keyword="x", marketplace="wallapop"))
     finally:
         await fetcher.aclose()
     # The path mentions the missing field under the v3 envelope.
@@ -339,7 +339,7 @@ async def test_unknown_extra_fields_are_tolerated(tmp_path: Path) -> None:
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
-        listings = await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
+        listings = await fetcher.search(SearchQuery(keyword="x", marketplace="wallapop"))
     finally:
         await fetcher.aclose()
     assert len(listings) == 2
@@ -365,7 +365,7 @@ async def test_successful_search_logs_event_with_latency_and_count(
 
     fetcher = _build_fetcher(tmp_path, handler)
     try:
-        await fetcher.search(SearchQuery(keywords=["x"], marketplace="wallapop"))
+        await fetcher.search(SearchQuery(keyword="x", marketplace="wallapop"))
     finally:
         await fetcher.aclose()
 

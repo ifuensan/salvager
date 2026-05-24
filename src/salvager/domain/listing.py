@@ -59,15 +59,22 @@ class Listing(BaseModel):
 class SearchQuery(BaseModel):
     """One search request to a :class:`PageFetcher` adapter.
 
-    The poll loop constructs one per (wishlist entry x marketplace)
-    using the entry's ``keywords``. ``max_price_eur`` is a soft hint —
-    adapters that can filter at the marketplace level (eBay) should
-    pass it through; adapters that can't (Wallapop free-text) ignore
-    it and rely on the LLM evaluator + the alert renderer's threshold.
+    Carries a single ``keyword`` phrase — the wishlist's list of
+    alternative phrases is fanned out at the caller (``poll_loop``):
+    one ``SearchQuery`` per phrase, with results unioned and de-duped
+    by ``listing_id``. Adapters that joined a list of phrases into a
+    single query string were silently AND-ing tokens at the
+    marketplace, so e.g. ``["Ultrastar 14TB", "WUH721414"]`` searched
+    for the literal concatenation and matched nothing.
+
+    ``max_price_eur`` is a soft hint — adapters that can filter at the
+    marketplace level (eBay) should pass it through; adapters that
+    can't (Wallapop free-text) ignore it and rely on the LLM evaluator
+    + the alert renderer's threshold.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    keywords: list[str] = Field(min_length=1)
+    keyword: str = Field(min_length=1)
     marketplace: Marketplace
     max_price_eur: Decimal | None = None

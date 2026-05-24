@@ -173,7 +173,7 @@ class WallapopApiFetcher(PageFetcher):
         # source is "search_box" (mirrors the SPA, verified
         # empirically against live traffic 2026-05-18).
         params: dict[str, str] = {
-            "keywords": " " + " ".join(query.keywords),
+            "keywords": " " + query.keyword,
             "source": "search_box",
             "latitude": str(self._latitude),
             "longitude": str(self._longitude),
