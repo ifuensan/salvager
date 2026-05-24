@@ -198,11 +198,9 @@ async def _serve(composed: ComposedDaemon) -> None:
         either trip Python's "Task exception was never retrieved"
         warning at GC time OR — worse — re-raise during cleanup and
         skip ``daemon.shutdown()`` + the SQLite ``aclose()`` (data
-        flush). The daemon keeps polling (outbound alerts still
-        work and will surface the same auth failure with their own
-        loud log), the operator sees the error in the log stream,
-        and the listener stops cleanly without dragging the rest
-        of the daemon down with it.
+        flush).  The supervisor logs the error and then initiates
+        daemon shutdown so the operator doesn't end up with a daemon
+        that looks healthy but silently ignores every callback tap.
         """
         try:
             await composed.telegram.listen_callbacks(composed.dispatcher.handle)
@@ -218,6 +216,26 @@ async def _serve(composed: ComposedDaemon) -> None:
         _listener_supervisor(),
         name="telegram_callback_listener",
     )
+
+    def _on_listener_done(task: asyncio.Task[None]) -> None:
+        """Trigger daemon shutdown when the listener exits unexpectedly.
+
+        A cancellation is expected (signal-handler path); any other
+        completion means the listener died on its own (e.g.
+        TelegramConfigError surfaced through the supervisor).  In
+        that scenario view/skip/snooze taps would silently stop
+        working — shut the daemon down so the operator gets a
+        clear "process exited" signal instead of a half-alive daemon.
+        """
+        if task.cancelled():
+            return
+        shutdown_task = asyncio.create_task(
+            daemon.shutdown(reason="listener-failed"),
+        )
+        shutdown_tasks.add(shutdown_task)
+        shutdown_task.add_done_callback(shutdown_tasks.discard)
+
+    listener_task.add_done_callback(_on_listener_done)
 
     def _on_signal(reason: str) -> None:
         task = asyncio.create_task(daemon.shutdown(reason=reason))
@@ -247,6 +265,13 @@ async def _serve(composed: ComposedDaemon) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await listener_task
         await daemon.shutdown()
+        # Wait for any signal-handler-initiated shutdown tasks to
+        # complete before closing resources.  Without this the
+        # scheduler drain (inside daemon.shutdown) may still be
+        # running when composed.aclose() closes the SQLite
+        # connections, corrupting in-flight writes.
+        if shutdown_tasks:
+            await asyncio.gather(*shutdown_tasks, return_exceptions=True)
         await composed.aclose()
 
 
