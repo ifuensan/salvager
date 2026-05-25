@@ -39,6 +39,14 @@ ParseMode = Literal["MarkdownV2"]
 _CALLBACK_DATA_MAX_BYTES = 64
 _CALLBACK_DATA_RE = re.compile(r"^[a-z0-9_]+:[a-z0-9_]+:[A-Za-z0-9_\-]+$")
 
+# Operator-facing prose fragments reused across many alert templates.
+# Centralising them keeps the wording consistent — a copy-edit in one
+# place propagates everywhere instead of drifting per-template.
+_NEXT_STEP_HEADER: Final[str] = "Próximo paso:"
+_CMD_PHASE2_ENABLE: Final[str] = "salvager phase2 enable <entry>"
+_CMD_AUDIT_SHOW_LAST5: Final[str] = "salvager audit show --last 5"
+_STATUS_PHASE2_GLOBALLY_DISABLED: Final[str] = "Estado actual: Fase 2 desactivada globalmente"
+
 # ─────────────────────────────────────────────────────────────────────────
 # Locked UX tokens (UX-DR3 / UX-DR4 / UX-DR5)
 # ─────────────────────────────────────────────────────────────────────────
@@ -499,24 +507,24 @@ def _buy_failure_next_steps(reason: BuyFailureReason, ctx: Mapping[str, Any]) ->
     if name == "reconciliation_tripped":
         return [
             "",
-            _prose("Próximo paso:"),
+            _prose(_NEXT_STEP_HEADER),
             _prose("1. ") + _cmd("salvager audit show --last 1"),
             _prose("2. Revisa el parser HTML antes de reactivar Fase 2 con ")
-            + _cmd("salvager phase2 enable <entry>"),
+            + _cmd(_CMD_PHASE2_ENABLE),
         ]
     if name == "circuit_open":
         return [
             "",
-            _prose("Próximo paso:"),
-            _prose("1. ") + _cmd("salvager audit show --last 5"),
-            _prose("2. ") + _cmd("salvager phase2 enable <entry>"),
+            _prose(_NEXT_STEP_HEADER),
+            _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+            _prose("2. ") + _cmd(_CMD_PHASE2_ENABLE),
         ]
     if name == "screenshot_missing":
         transaction_id = ctx.get("transaction_id", "<transaction_id>")
         receipt_id = ctx.get("receipt_id")
         steps = [
             "",
-            _prose("Próximo paso:"),
+            _prose(_NEXT_STEP_HEADER),
             _prose("1. ") + _cmd(f"salvager audit show --id {transaction_id}"),
         ]
         if receipt_id is not None:
@@ -525,9 +533,9 @@ def _buy_failure_next_steps(reason: BuyFailureReason, ctx: Mapping[str, Any]) ->
     # Generic catch-all next-step block for the remaining variants.
     return [
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
-        _prose("2. ") + _cmd("salvager phase2 enable <entry>"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+        _prose("2. ") + _cmd(_CMD_PHASE2_ENABLE),
     ]
 
 
@@ -622,7 +630,9 @@ def _body_wallapop_session_expired(_ctx: Mapping[str, Any]) -> list[str]:
         _prose("Adapter: wallapop_api (devuelve 401)"),
         _prose("Fallback: wallapop_tinyfish activo (sin alertas perdidas)"),
         "",
-        _prose("Próximo paso: ") + _cmd("salvager login wallapop") + _prose(" cuando puedas"),
+        _prose(_NEXT_STEP_HEADER + " ")
+        + _cmd("salvager login wallapop")
+        + _prose(" cuando puedas"),
     ]
 
 
@@ -645,8 +655,8 @@ def _body_wallapop_both_paths_down(ctx: Mapping[str, Any]) -> list[str]:
         _prose(f"Causa: {failures} fallos consecutivos · último error: {error_class}"),
         _prose("Estado actual: alertas de Wallapop en pausa (eBay no afectado)"),
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
         _prose("2. revisa la conexión o parchea el adaptador si persiste"),
         _prose("3. ") + _cmd("docker-compose restart salvager"),
     ]
@@ -668,7 +678,7 @@ def _body_ebay_token_refresh_failed(_ctx: Mapping[str, Any]) -> list[str]:
         _prose("Causa: el endpoint de refresco rechazó el refresh token (HTTP 401)"),
         _prose("Estado actual: alertas de eBay en pausa (Wallapop no afectado)"),
         "",
-        _prose("Próximo paso:"),
+        _prose(_NEXT_STEP_HEADER),
         _prose("1. ") + _cmd("salvager login ebay --ru-name <tu-runame>"),
         _prose("2. ") + _cmd("docker-compose restart salvager"),
     ]
@@ -708,12 +718,12 @@ def _body_smoke_test_failed(ctx: Mapping[str, Any]) -> list[str]:
     return [
         _prose(f"Fixture: {fixture}"),
         _prose(f"Parser: {parsed} € · esperado: {expected} € · delta: {delta} €"),
-        _prose("Estado actual: Fase 2 desactivada globalmente"),
+        _prose(_STATUS_PHASE2_GLOBALLY_DISABLED),
         "",
-        _prose("Próximo paso:"),
+        _prose(_NEXT_STEP_HEADER),
         _prose("1. ") + _cmd("salvager phase2 smoke-test"),
         _prose("2. ") + _cmd("salvager audit show --type phase2_smoke_test --last 3"),
-        _prose("3. parchea el parser y reactiva con ") + _cmd("salvager phase2 enable <entry>"),
+        _prose("3. parchea el parser y reactiva con ") + _cmd(_CMD_PHASE2_ENABLE),
     ]
 
 
@@ -727,12 +737,12 @@ def _body_phase2_disabled(ctx: Mapping[str, Any]) -> list[str]:
     return [
         _prose(f"Causa: {reason}"),
         _prose(f"Última entrada afectada: {last_entry}"),
-        _prose("Estado actual: Fase 2 desactivada globalmente"),
+        _prose(_STATUS_PHASE2_GLOBALLY_DISABLED),
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
         _prose("2. revisa el motivo y parchea si es un bug"),
-        _prose("3. ") + _cmd("salvager phase2 enable <entry>"),
+        _prose("3. ") + _cmd(_CMD_PHASE2_ENABLE),
     ]
 
 
@@ -758,8 +768,8 @@ def _body_phase2_screenshot_missing(ctx: Mapping[str, Any]) -> list[str]:
         _prose(f"Recibo: {receipt_id} · listing: {listing_id}"),
         _prose("Estado: la compra puede haberse completado, pero no se capturó el recibo"),
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
         _prose("2. revisa el marketplace manualmente para confirmar la transacción"),
     ]
 
@@ -783,10 +793,10 @@ def _body_buy_orchestrator_error(ctx: Mapping[str, Any]) -> list[str]:
         _prose(f"Alert: {alert_id}"),
         _prose("Estado actual: Fase 2 desactivada por seguridad"),
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
         _prose("2. ") + _cmd("salvager logs --last 100"),
-        _prose("3. ") + _cmd("salvager phase2 enable <entry>"),
+        _prose("3. ") + _cmd(_CMD_PHASE2_ENABLE),
     ]
 
 
@@ -797,12 +807,12 @@ def _body_circuit_open(ctx: Mapping[str, Any]) -> list[str]:
     return [
         _prose(f"Causa: {failures} fallos consecutivos (umbral: {threshold})"),
         _prose(f"Última entrada afectada: {last_entry}"),
-        _prose("Estado actual: Fase 2 desactivada globalmente"),
+        _prose(_STATUS_PHASE2_GLOBALLY_DISABLED),
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
         _prose("2. revisa la causa y parchea si es un bug"),
-        _prose("3. ") + _cmd("salvager phase2 enable <entry>"),
+        _prose("3. ") + _cmd(_CMD_PHASE2_ENABLE),
     ]
 
 
@@ -813,8 +823,8 @@ def _body_poll_cycle_error(ctx: Mapping[str, Any]) -> list[str]:
         _prose(f"Causa: {error_class} en el ciclo de {marketplace}"),
         _prose("Estado actual: el ciclo continuará en el siguiente tick"),
         "",
-        _prose("Próximo paso:"),
-        _prose("1. ") + _cmd("salvager audit show --last 5"),
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
         _prose("2. ") + _cmd("salvager logs --last 50"),
     ]
 

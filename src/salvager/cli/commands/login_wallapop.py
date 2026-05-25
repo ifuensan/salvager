@@ -94,7 +94,7 @@ def run(
         )
         return 4
     except BrowserNotInstalled as exc:
-        log.error("login_wallapop_browser_missing", extra={"detail": str(exc)})
+        log.exception("login_wallapop_browser_missing", extra={"detail": str(exc)})
         render_prose(
             "Chromium browser not installed for Playwright",
             style="error",

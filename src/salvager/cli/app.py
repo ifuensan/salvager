@@ -144,7 +144,7 @@ def _run_daemon(*, config_path: Path, wishlist_path: Path, env_path: Path) -> No
             wishlist_path=wishlist_path,
         )
     except NoMarketplacesEnabledError as exc:
-        log.error("daemon_no_marketplaces_enabled", extra={"reason": str(exc)})
+        log.exception("daemon_no_marketplaces_enabled", extra={"reason": str(exc)})
         render_prose(
             "no marketplace credentials found",
             style="error",
@@ -207,7 +207,7 @@ async def _serve(composed: ComposedDaemon) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.error(
+            log.exception(
                 "telegram_listener_terminated",
                 extra={"error_class": exc.__class__.__name__, "detail": str(exc)},
             )
