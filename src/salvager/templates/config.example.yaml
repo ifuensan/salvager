@@ -106,6 +106,14 @@ logging:
   # failure path. The agent does NOT require debug logging to root-cause
   # an operational alert (NFR-O4).
   level: info
+  # json | pretty. Default json is the NFR-O1 contract (one JSON object
+  # per line on stdout) — every downstream consumer (jq, Loki, Promtail,
+  # CI log capture) relies on it, so leave it as-is in production.
+  # Switch to pretty for interactive `uv run salvager` debugging only;
+  # any pipeline that parses stdout WILL break under pretty.
+  # Overrides, highest priority first: --log-format CLI flag,
+  # SALVAGER_LOG_FORMAT env var, this field.
+  format: json
 
 # ─────────────────────────────────────────────────────────────────────────
 # observability — degradation reporting (NFR-R3)

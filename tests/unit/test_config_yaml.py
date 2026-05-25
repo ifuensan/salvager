@@ -68,6 +68,17 @@ def test_ebay_defaults_match_example() -> None:
 def test_logging_defaults_match_example() -> None:
     log = LoggingConfig()
     assert log.level == "info"
+    assert log.format == "json"
+
+
+def test_logging_accepts_pretty_format() -> None:
+    log = LoggingConfig(format="pretty")
+    assert log.format == "pretty"
+
+
+def test_logging_accepts_explicit_json_format() -> None:
+    log = LoggingConfig(format="json")
+    assert log.format == "json"
 
 
 def test_paths_defaults_match_example() -> None:
@@ -120,6 +131,11 @@ def test_unknown_locale_is_rejected() -> None:
 def test_unknown_log_level_is_rejected() -> None:
     with pytest.raises(ValidationError):
         LoggingConfig(level="critical")  # type: ignore[arg-type]
+
+
+def test_unknown_log_format_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        LoggingConfig(format="verbose")  # type: ignore[arg-type]
 
 
 # ─────────────────────────────────────────────────────────────────────────
