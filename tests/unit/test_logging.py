@@ -216,6 +216,25 @@ def test_pretty_drops_none_extras() -> None:
     assert "absent" not in line
 
 
+def test_pretty_escapes_control_chars_in_values() -> None:
+    """Newline / CR / tab in an extra must NOT break the one-line invariant."""
+    result = _run(
+        r"""
+        from salvager.observability.logging import configure_log_format, get_logger
+        configure_log_format("pretty")
+        get_logger("test").info(
+            "evt",
+            extra={"trace": "line1\nline2\twith-tab\rcr-end"},
+        )
+        """,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = _pretty_lines(result.stdout)
+    assert len(lines) == 1, f"expected exactly one record line, got {len(lines)}"
+    line = lines[0]
+    assert r'trace="line1\nline2\twith-tab\rcr-end"' in line
+
+
 def test_pretty_quotes_values_with_whitespace() -> None:
     result = _run(
         """

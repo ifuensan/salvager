@@ -131,7 +131,17 @@ _PRETTY_QUOTE_RE = re.compile(r'[\s"\\]')
 def _format_pretty_value(value: Any) -> str:
     text = str(value)
     if _PRETTY_QUOTE_RE.search(text):
-        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        # Backslash first so the escapes we insert below don't get re-escaped.
+        # Newline / CR / tab MUST become visible sequences — otherwise a value
+        # like "line1\nline2" would break the one-line-per-record invariant
+        # the pretty format relies on for grep / tee consumers.
+        escaped = (
+            text.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        )
         return f'"{escaped}"'
     return text
 
