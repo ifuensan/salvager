@@ -149,7 +149,7 @@ async def run_poll_cycle(
                 sub_listings = await fetcher.search(query)
             except Exception as exc:
                 keyword_failures += 1
-                log.error(
+                log.exception(
                     "poll_keyword_fetch_failed",
                     extra={
                         "marketplace": marketplace,
@@ -245,7 +245,7 @@ async def run_poll_cycle(
                     await store.record_seen(listing, entry.entry_key)
                 except Exception as exc:
                     summary.errors += 1
-                    log.error(
+                    log.exception(
                         "poll_record_seen_failed",
                         extra={
                             "listing_id": listing.listing_id,
@@ -262,7 +262,7 @@ async def run_poll_cycle(
     try:
         await store.set_meta(f"last_poll_{marketplace}", clock().isoformat())
     except Exception as exc:
-        log.error(
+        log.exception(
             "poll_heartbeat_write_failed",
             extra={"marketplace": marketplace, "error_class": exc.__class__.__name__},
         )

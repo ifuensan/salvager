@@ -41,6 +41,9 @@ _VALID_TYPES = frozenset({_TYPE_ALERT, _TYPE_CALLBACK, _TYPE_DROPPED})
 
 _DEFAULT_SHOW_LIMIT = 10
 
+#: ISO 8601 UTC offset that ``datetime.fromisoformat`` accepts in place of ``Z``.
+_UTC_ISO_OFFSET = "+00:00"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Public entry points
@@ -310,7 +313,7 @@ def _record_dt(record: dict[str, Any]) -> datetime | None:
     if not isinstance(ts, str):
         return None
     try:
-        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(ts.replace("Z", _UTC_ISO_OFFSET))
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
@@ -321,7 +324,7 @@ def _parse_since(value: str | None) -> datetime | None:
     if value is None:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", _UTC_ISO_OFFSET))
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
@@ -329,7 +332,7 @@ def _parse_since(value: str | None) -> datetime | None:
 
 def _iso_z(value: str) -> str:
     """Normalize a UTC ISO 8601 string to the ``Z`` suffix form (UX-DR20)."""
-    return value[:-6] + "Z" if value.endswith("+00:00") else value
+    return value[:-6] + "Z" if value.endswith(_UTC_ISO_OFFSET) else value
 
 
 def _render_show_table(records: list[dict[str, Any]], *, width: int) -> None:

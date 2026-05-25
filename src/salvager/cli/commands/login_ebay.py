@@ -104,7 +104,7 @@ def run(
             )
         )
     except EbayOAuthExchangeFailed as exc:
-        log.error(
+        log.exception(
             "login_ebay_exchange_failed",
             extra={"status_code": exc.status_code, "ebay_message": exc.ebay_message},
         )

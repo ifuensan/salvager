@@ -140,13 +140,15 @@ async def execute_buy_via_tinyfish(
             ctx={"budget_s": max_duration_s, "url": url},
         )
     except AuthenticationError as exc:
-        log.error("tinyfish_buy_auth_failed", extra={"error_class": exc.__class__.__name__})
+        log.exception("tinyfish_buy_auth_failed", extra={"error_class": exc.__class__.__name__})
         return BuyFailure(
             reason=BuyFailureReason.payment_rail_unavailable,
             ctx={"error_class": exc.__class__.__name__, "detail": "tinyfish_auth_failed"},
         )
     except PermissionDeniedError as exc:
-        log.error("tinyfish_buy_permission_denied", extra={"error_class": exc.__class__.__name__})
+        log.exception(
+            "tinyfish_buy_permission_denied", extra={"error_class": exc.__class__.__name__}
+        )
         return BuyFailure(
             reason=BuyFailureReason.payment_rail_unavailable,
             ctx={
@@ -161,7 +163,7 @@ async def execute_buy_via_tinyfish(
             ctx={"error_class": exc.__class__.__name__, "detail": "tinyfish_rate_limited"},
         )
     except SDKError as exc:
-        log.error("tinyfish_buy_sdk_error", extra={"error_class": exc.__class__.__name__})
+        log.exception("tinyfish_buy_sdk_error", extra={"error_class": exc.__class__.__name__})
         return BuyFailure(
             reason=BuyFailureReason.marketplace_error,
             ctx={"error_class": exc.__class__.__name__, "detail": str(exc)},
@@ -216,7 +218,7 @@ def _parse_response(
     try:
         return BuyAgentResponse.model_validate(response.result)
     except ValidationError as exc:
-        log.error(
+        log.exception(
             "tinyfish_buy_response_schema_drift",
             extra={"run_id": response.run_id, "errors": str(exc)},
         )
