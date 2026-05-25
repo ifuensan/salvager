@@ -48,9 +48,9 @@ Extras render in caller-declared order (Python 3.7+ dict ordering on `record.__d
 
 **Alternative considered**: JSON-encoded extras at the end of the pretty line for round-trippability. Rejected — defeats the readability goal; if the operator wants JSON they pick `json`.
 
-### Decision 5: `--no-color` follows the [NO_COLOR](https://no-color.org/) convention, but not in this change
+### Decision 5: Honour the [NO_COLOR](https://no-color.org/) convention
 
-If `NO_COLOR` is set in the environment, the pretty formatter must skip ANSI codes regardless of TTY status — that's the established cross-tool convention. Implementation is one extra line; calling it out here so it's not "discovered" mid-PR.
+If `NO_COLOR` is set in the environment, the pretty formatter skips ANSI codes regardless of TTY status — established cross-tool convention. Implementation is one extra clause inside the existing `use_color` check (Decision 3), so this lands in this change rather than being deferred. A regression test (`test_pretty_no_color_env_var_suppresses_ansi`) covers it.
 
 ## Risks / Trade-offs
 
