@@ -208,6 +208,7 @@ async def test_ebay_checkout_happy_path_returns_buy_success() -> None:
     assert isinstance(result, BuySuccess)
     assert result.payment_method == "ebay_checkout"
     assert result.price_paid_eur == Decimal("40.00")
+    assert len(client.agent.calls) == 1, "successful buy must have driven exactly one agent run"
     call = client.agent.calls[0]
     assert call["url"] == "https://www.ebay.es/itm/1234567890"
     assert "eBay" in call["goal"]

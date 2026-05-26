@@ -848,6 +848,7 @@ async def test_phase2_downgrades_silently_when_preflight_fails(
     )
 
     assert summary.alerts_sent == 1
+    assert len(store.snapshots) == 1, "one alert sent must have persisted exactly one snapshot"
     persisted = store.snapshots[0]
     # Silent downgrade — the persisted snapshot is Phase 1, not Phase 2.
     assert persisted.phase == "phase1"
@@ -875,6 +876,7 @@ async def test_phase1_path_unchanged_when_no_preflight_supplied() -> None:
     )
 
     assert summary.alerts_sent == 1
+    assert len(store.snapshots) == 1, "one alert sent must have persisted exactly one snapshot"
     persisted = store.snapshots[0]
     assert persisted.phase == "phase1"
     assert persisted.phase2_max_price_eur is None
