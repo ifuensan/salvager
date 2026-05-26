@@ -44,13 +44,23 @@ from salvager.adapters.llm_cache_sqlite.cache import (
 )
 from salvager.adapters.llm_claude.evaluator import ClaudeHaikuEvaluator
 from salvager.adapters.llm_gemini.evaluator import GeminiFlashEvaluator
+from salvager.adapters.sqlite_store.audit_writer import Phase2AuditWriter
 from salvager.adapters.sqlite_store.connection import open_connection
 from salvager.adapters.sqlite_store.migrations import (
     MigrationRunner,
     db_path_under,
 )
+from salvager.adapters.sqlite_store.phase2_state_reader import (
+    SqlitePhase2StateReader,
+)
 from salvager.adapters.sqlite_store.store import SqliteStore
 from salvager.adapters.telegram_bot.surface import TelegramBotSurface
+from salvager.adapters.tinyfish_browser.ebay_checkout import EbayCheckoutFlow
+from salvager.adapters.tinyfish_browser.marketplace_dispatch import (
+    MarketplaceDispatchingBrowser,
+    MarketplaceDispatchingPageFetcher,
+)
+from salvager.adapters.tinyfish_browser.wallapop_pay import WallapopPayFlow
 from salvager.adapters.wallapop_api.fetcher import WallapopApiFetcher
 from salvager.adapters.wallapop_tinyfish.fetcher import (
     WallapopTinyfishFetcher,
@@ -59,19 +69,24 @@ from salvager.config.config_yaml import ConfigModel, load_config
 from salvager.config.env import EnvSettings
 from salvager.config.wishlist_yaml import load_wishlist
 from salvager.domain.prompts import PROMPT_VERSION
-from salvager.domain.wishlist import Wishlist
+from salvager.domain.wishlist import Wishlist, WishlistEntry
 from salvager.interfaces.listing_evaluator import ListingEvaluator
 from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.interfaces.scheduler import Scheduler
+from salvager.interfaces.store import EntryKey
 from salvager.observability.logging import get_logger
+from salvager.orchestration.buy_orchestrator import BuyOrchestrator, WishlistLoader
 from salvager.orchestration.callback_handler import (
     DEFAULT_SNOOZE_HOURS,
     CallbackDispatcher,
 )
+from salvager.orchestration.circuit_breaker import CircuitBreaker
 from salvager.orchestration.daemon import Daemon
 from salvager.orchestration.degradation_reporter import DegradationReporter
 from salvager.orchestration.health_state import HealthState
+from salvager.orchestration.phase2_preflight import Phase2Preflight
 from salvager.orchestration.poll_loop import run_poll_cycle
+from salvager.orchestration.reconciler import Reconciler
 from salvager.orchestration.wallapop_fallback import WallapopFallbackFetcher
 
 #: Path under ``data_dir`` where Story 2.9 writes the Wallapop cookie jar
@@ -203,17 +218,24 @@ def compose_daemon(
         ebay_cadence_minutes=config.schedule.ebay_minutes,
     )
 
-    # Phase 1 callback wiring. ``buy_orchestrator=None`` is deliberate:
-    # the BuyOrchestrator pulls in the TinyFish browser, reconciler,
-    # circuit breaker, audit writer, wishlist loader, and Phase 2
-    # audit DAL — a separate composition pass. With None here, the
-    # dispatcher records the audit row + flips the in-flight badge on
-    # ``buy`` taps and logs ``buy_orchestrator_not_wired`` instead of
-    # firing the buy. Wiring lands in a follow-up PR.
+    # Phase 2 buy orchestrator — operator-confirmed checkout. The
+    # orchestrator fires only when an operator taps the Comprar button
+    # on a Phase 2 alert; it never auto-buys. Marketplace dispatch lives
+    # in the per-marketplace wrappers (see marketplace_dispatch.py) so
+    # the orchestrator can hold a single browser + single fetcher.
+    buy_orchestrator = _build_buy_orchestrator(
+        env=env,
+        config=config,
+        data_dir=data_dir,
+        wishlist_path=Path(wishlist_path),
+        store=store,
+        telegram=telegram,
+        reporter=reporter,
+    )
     dispatcher = CallbackDispatcher(
         store=store,
         surface=telegram,
-        buy_orchestrator=None,
+        buy_orchestrator=buy_orchestrator,
         snooze_hours=DEFAULT_SNOOZE_HOURS,
     )
 
@@ -389,6 +411,120 @@ def _build_ebay_job(
 
 def _hours(n: int) -> timedelta:
     return timedelta(hours=n)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 2 buy orchestrator wiring
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _make_wishlist_loader(wishlist_path: Path) -> WishlistLoader:
+    """Build the ``EntryKey → WishlistEntry | None`` closure for the
+    BuyOrchestrator.
+
+    The orchestrator's pre-flight resolves entries at tap time, not at
+    daemon-startup time, so an operator who edits ``wishlist.yaml``
+    between alert and tap sees the updated state respected. The closure
+    re-reads the file but short-circuits to a parsed-and-cached
+    ``Wishlist`` when the file's mtime hasn't moved.
+    """
+    cache: dict[float, Wishlist] = {}
+
+    def _load_current() -> Wishlist:
+        mtime = wishlist_path.stat().st_mtime
+        if mtime not in cache:
+            cache.clear()  # keep at most one entry
+            cache[mtime] = load_wishlist(wishlist_path)
+        return cache[mtime]
+
+    def loader(entry_key: EntryKey) -> WishlistEntry | None:
+        for entry in _load_current().entries:
+            if entry.entry_key == entry_key:
+                return entry
+        return None
+
+    return loader
+
+
+def _build_buy_orchestrator(
+    *,
+    env: EnvSettings,
+    config: ConfigModel,
+    data_dir: Path,
+    wishlist_path: Path,
+    store: SqliteStore,
+    telegram: TelegramBotSurface,
+    reporter: DegradationReporter,
+) -> BuyOrchestrator:
+    """Wire the Phase 2 buy orchestrator with its nine collaborators.
+
+    The orchestrator drives one buy per operator Comprar tap — no
+    autonomous trigger anywhere in the pipeline. Construction is
+    side-effect-free; the marketplace adapters lazy-load their state
+    (Wallapop cookies, eBay OAuth tokens) on first use, so a deployment
+    that lacks credentials for one marketplace can still build the
+    orchestrator — the missing side's adapter will fail at call time
+    with a typed BuyFailure, which the operator only ever sees if the
+    corresponding marketplace's poll cycle is also running.
+    """
+    db_path = db_path_under(data_dir)
+    audit_writer = Phase2AuditWriter(db_path)
+    state_reader = SqlitePhase2StateReader(db_path)
+
+    preflight = Phase2Preflight(
+        state_reader=state_reader,
+        circuit_breaker_threshold=config.phase2.circuit_breaker_threshold,
+    )
+    circuit_breaker = CircuitBreaker(
+        audit_writer=audit_writer,
+        state_reader=state_reader,
+        reporter=reporter,
+        threshold=config.phase2.circuit_breaker_threshold,
+    )
+
+    # Reconciler's pre-buy refetch uses fresh per-marketplace fetchers —
+    # cheap, stateless duplicates of what _build_*_job builds internally.
+    # Reusing the poll-time instances would require returning them from
+    # the per-marketplace builders, which is a bigger refactor for no
+    # operational benefit.
+    wallapop_recon_fetcher: PageFetcher = WallapopApiFetcher(
+        cookies_path=data_dir / WALLAPOP_COOKIES_RELPATH,
+        latitude=config.wallapop.latitude,
+        longitude=config.wallapop.longitude,
+    )
+    ebay_recon_fetcher: PageFetcher = EbayApiFetcher(
+        token_store=OAuthTokenStore(data_dir / EBAY_OAUTH_TOKENS_RELPATH),
+        app_id=env.EBAY_APP_ID,
+        cert_id=env.EBAY_CERT_ID,
+        quota=DailyQuotaTracker(config.ebay.daily_request_quota),
+    )
+    reconciler = Reconciler(
+        cross_source_fetcher=MarketplaceDispatchingPageFetcher(
+            wallapop=wallapop_recon_fetcher,
+            ebay=ebay_recon_fetcher,
+        ),
+        tolerance_eur=config.phase2.reconciliation_tolerance_eur,
+        tolerance_pct=config.phase2.reconciliation_tolerance_pct,
+    )
+
+    # Both browser flows share the TinyFish API key — marketplace login
+    # happens inside the browser session, not at construction.
+    browser = MarketplaceDispatchingBrowser(
+        wallapop=WallapopPayFlow(api_key=env.TINYFISH_API_KEY),
+        ebay=EbayCheckoutFlow(api_key=env.TINYFISH_API_KEY),
+    )
+
+    return BuyOrchestrator(
+        preflight=preflight,
+        reconciler=reconciler,
+        browser=browser,
+        circuit_breaker=circuit_breaker,
+        audit_writer=audit_writer,
+        telegram_surface=telegram,
+        store=store,
+        reporter=reporter,
+        wishlist_loader=_make_wishlist_loader(wishlist_path),
+    )
 
 
 __all__ = [

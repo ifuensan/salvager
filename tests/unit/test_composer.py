@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -231,19 +232,18 @@ def test_both_credentials_present_builds_both_jobs(
         asyncio.run(composed.aclose())
 
 
-def test_composer_wires_telegram_listener_dispatcher_with_no_buy_orchestrator(
+def test_composer_wires_telegram_listener_dispatcher_with_buy_orchestrator(
     env: EnvSettings,
     fake_dirs: tuple[Path, Path],
     stub_adapters: dict[str, Any],
 ) -> None:
-    """``ComposedDaemon`` exposes the Telegram surface and the
-    callback dispatcher so the CLI entry-point can run
-    ``listen_callbacks`` concurrently with the scheduler. The
-    ``buy_orchestrator`` is intentionally None at this composition
-    pass — Phase 2 buy taps fall back to the dispatcher's
-    defence-in-depth path (audit + badge + ``buy_orchestrator_not_wired``
-    log) until a follow-up PR wires the BuyOrchestrator.
+    """``ComposedDaemon`` exposes the Telegram surface and the callback
+    dispatcher with a fully-wired BuyOrchestrator. Phase 2 Comprar taps
+    drive the orchestrator instead of falling back to the
+    ``buy_orchestrator_not_wired`` defence-in-depth path.
     """
+    from salvager.orchestration.buy_orchestrator import BuyOrchestrator
+
     config_dir, data_dir = fake_dirs
     (data_dir / WALLAPOP_COOKIES_RELPATH.parent).mkdir(parents=True, exist_ok=True)
     (data_dir / WALLAPOP_COOKIES_RELPATH).write_text("{}", encoding="utf-8")
@@ -259,9 +259,109 @@ def test_composer_wires_telegram_listener_dispatcher_with_no_buy_orchestrator(
         # The dispatcher must hold the same surface — otherwise an ack
         # keyboard edit lands on a different bot than the operator sees.
         assert composed.dispatcher._surface is composed.telegram
-        # Buy orchestrator deliberately not wired at this composition pass.
-        assert composed.dispatcher._buy_orchestrator is None
+
+        # BuyOrchestrator is wired with all nine collaborators populated.
+        buy = composed.dispatcher._buy_orchestrator
+        assert isinstance(buy, BuyOrchestrator)
+        for field_name in (
+            "preflight",
+            "reconciler",
+            "browser",
+            "circuit_breaker",
+            "audit_writer",
+            "telegram_surface",
+            "store",
+            "reporter",
+            "wishlist_loader",
+        ):
+            assert getattr(buy, field_name) is not None, (
+                f"BuyOrchestrator.{field_name} was not populated by the composer"
+            )
+        # Telegram + store are the same instances reused from the Phase 1 build.
+        assert buy.telegram_surface is composed.telegram
+        assert buy.store is composed.store
     finally:
         import asyncio
 
         asyncio.run(composed.aclose())
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# WishlistLoader closure — must see operator edits between alert and tap
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_wishlist_loader_returns_current_entry_after_file_edit(tmp_path: Path) -> None:
+    """A wishlist edit between alert and tap must be observed by the
+    orchestrator's preflight via the loader. The closure re-reads on
+    mtime change instead of snapshotting at startup."""
+    import os
+    import time
+
+    from salvager.orchestration.composer import _make_wishlist_loader
+
+    wishlist_path = tmp_path / "wishlist.yaml"
+    initial = """
+entries:
+  - manufacturer: Western Digital
+    model: WD Red Plus 4TB
+    ref: WD40EFPX
+    type: hdd
+    max_price_solo: 60.00
+    max_price_in_device: null
+    keywords: ["wd red plus 4tb"]
+    container_keywords: []
+    confidence_threshold: high
+    phase2:
+      enabled: false
+      max_price_eur: null
+"""
+    wishlist_path.write_text(initial, encoding="utf-8")
+    loader = _make_wishlist_loader(wishlist_path)
+
+    entry_key = ("Western Digital", "WD Red Plus 4TB", "WD40EFPX")
+    first = loader(entry_key)
+    assert first is not None
+    assert first.max_price_solo == Decimal("60.00")
+
+    # Bump mtime explicitly so a rewrite within the same second is still
+    # visible to the cache invalidation logic.
+    updated = initial.replace("60.00", "55.00")
+    wishlist_path.write_text(updated, encoding="utf-8")
+    os.utime(wishlist_path, (time.time() + 1, time.time() + 1))
+
+    second = loader(entry_key)
+    assert second is not None
+    assert second.max_price_solo == Decimal("55.00"), (
+        "loader should re-read the file after mtime bumps"
+    )
+
+
+def test_wishlist_loader_returns_none_for_unknown_entry_key(tmp_path: Path) -> None:
+    """An EntryKey that doesn't match any current entry resolves to None
+    (operator removed the entry between alert and tap)."""
+    from salvager.orchestration.composer import _make_wishlist_loader
+
+    wishlist_path = tmp_path / "wishlist.yaml"
+    wishlist_path.write_text(
+        """
+entries:
+  - manufacturer: Western Digital
+    model: WD Red Plus 4TB
+    ref: WD40EFPX
+    type: hdd
+    max_price_solo: 60.00
+    max_price_in_device: null
+    keywords: ["wd red plus 4tb"]
+    container_keywords: []
+    confidence_threshold: high
+    phase2:
+      enabled: false
+      max_price_eur: null
+""",
+        encoding="utf-8",
+    )
+    loader = _make_wishlist_loader(wishlist_path)
+
+    removed_key = ("Western Digital", "WD Red Plus 8TB", "WD80EFPX")
+    assert loader(removed_key) is None
