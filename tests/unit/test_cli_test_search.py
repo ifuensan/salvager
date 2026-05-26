@@ -377,4 +377,5 @@ def test_arbitrary_query_is_passed_verbatim(
     code = _run(tmp_path, query_or_entry="random gpu query", marketplace="wallapop")
     assert code == 0
     # The free-text string went straight into the query keyword.
+    assert len(captured) == 1, "wallapop search must have fired exactly one query"
     assert captured[0].keyword == "random gpu query"
