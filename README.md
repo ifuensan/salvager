@@ -103,6 +103,39 @@ Scheduler runs in-process (asyncio-based, `adapters/asyncio_scheduler/`). TinyFi
 
 ---
 
+## Logs
+
+The daemon writes one structured record per line to stdout — JSON by default (NFR-O1), or a coloured human-readable rendering on opt-in. Persistence is delegated to the host (`tee`, systemd journal, Docker log driver) so the app stays 12-factor.
+
+### Picking a format
+
+| Setting | Default | Override |
+|---|---|---|
+| `logging.format` in `config.yaml` | `json` | `pretty` for interactive debugging |
+| `SALVAGER_LOG_FORMAT` env var | unset | `json` or `pretty` (wins over config) |
+| `--log-format` CLI flag | unset | `json` or `pretty` (wins over env) |
+
+Pretty output omits ANSI colours automatically when stdout is piped or `NO_COLOR` is set, so `salvager --log-format pretty | tee log.txt` produces a clean file.
+
+### Persisting the stream
+
+**Manual run** — capture stdout to a daily file while still seeing it live:
+
+```bash
+uv run salvager -c config/config.host.yaml 2>&1 \
+  | tee -a "data/logs/salvager-$(date +%F).jsonl"
+```
+
+**Under systemd** — let journald handle rotation and follow with jq:
+
+```bash
+journalctl -u salvager -f --output=cat | jq .
+```
+
+**Under Docker** — stdout is captured by the runtime; configure the daemon's logging driver (`json-file`, `journald`, etc.) at the container level. The app intentionally does not write log files itself.
+
+---
+
 ## Planning artifacts
 
 The BMAD planning artifacts that drove the design and implementation plan live in [`_bmad-output/planning-artifacts/`](_bmad-output/planning-artifacts):

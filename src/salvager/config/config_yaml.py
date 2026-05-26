@@ -33,6 +33,7 @@ from ruamel.yaml.error import YAMLError
 
 LLMProvider = Literal["gemini-flash", "gpt-4o-mini", "claude-haiku"]
 LogLevel = Literal["debug", "info", "warn", "error"]
+LogFormat = Literal["json", "pretty"]
 TelegramLocale = Literal["es-ES"]  # UX-DR27 bilingual asymmetry — v1 is Spanish only.
 
 
@@ -104,11 +105,20 @@ class WallapopConfig(BaseModel):
 
 
 class LoggingConfig(BaseModel):
-    """Structured-log threshold (NFR-O1, NFR-O4)."""
+    """Structured-log threshold + output format (NFR-O1, NFR-O4).
+
+    ``format`` switches the stdout renderer:
+    - ``json`` (default) — one JSON object per line, the NFR-O1 contract
+      every downstream consumer (jq, Loki, Promtail, CI capture) relies on.
+    - ``pretty`` — human-readable single line per record; for interactive
+      ``uv run salvager`` debugging only. Pipelines that parse stdout
+      will break under this setting, so leave it unset in production.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     level: LogLevel = "info"
+    format: LogFormat = "json"
 
 
 class ObservabilityConfig(BaseModel):

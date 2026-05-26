@@ -113,14 +113,65 @@ def _root(
             help="Path to .env (default: ./config/.env).",
         ),
     ] = _DEFAULT_ENV_PATH,
+    log_format: Annotated[
+        str | None,
+        typer.Option(
+            "--log-format",
+            help=(
+                "Log output format: 'json' (default, NFR-O1) or 'pretty' "
+                "(interactive runs only). Overrides SALVAGER_LOG_FORMAT and "
+                "the logging.format field in config.yaml."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run the daemon when invoked without a subcommand."""
     if ctx.invoked_subcommand is not None:
         return
-    _run_daemon(config_path=config_path, wishlist_path=wishlist_path, env_path=env_path)
+    _run_daemon(
+        config_path=config_path,
+        wishlist_path=wishlist_path,
+        env_path=env_path,
+        log_format_cli=log_format,
+    )
 
 
-def _run_daemon(*, config_path: Path, wishlist_path: Path, env_path: Path) -> None:
+_VALID_LOG_FORMATS = frozenset({"json", "pretty"})
+
+
+def _resolve_log_format(*, cli: str | None, env: str | None, config: str) -> str:
+    """Pick the active log format from the CLI > env > config > default ladder.
+
+    Raises ``typer.BadParameter``/``ValueError`` with the source named when
+    a non-None CLI or env value is not one of the supported formats.
+    ``config`` is already Pydantic-validated to the ``LogFormat`` literal,
+    so we trust its value.
+    """
+    if cli is not None:
+        if cli not in _VALID_LOG_FORMATS:
+            raise typer.BadParameter(
+                f"invalid --log-format {cli!r}; expected one of: "
+                f"{', '.join(sorted(_VALID_LOG_FORMATS))}",
+                param_hint="--log-format",
+            )
+        return cli
+    if env is not None:
+        if env not in _VALID_LOG_FORMATS:
+            raise ValueError(
+                f"invalid SALVAGER_LOG_FORMAT {env!r}; expected one of: "
+                f"{', '.join(sorted(_VALID_LOG_FORMATS))}"
+            )
+        return env
+    return config
+
+
+def _run_daemon(
+    *,
+    config_path: Path,
+    wishlist_path: Path,
+    env_path: Path,
+    log_format_cli: str | None = None,
+) -> None:
     """Compose every adapter and run the daemon until SIGTERM/SIGINT.
 
     Exit-code semantics (FR48):
@@ -128,11 +179,26 @@ def _run_daemon(*, config_path: Path, wishlist_path: Path, env_path: Path) -> No
       - ``5`` — no marketplaces have credentials on disk (no work to do).
       - ``0`` — clean shutdown after a signal.
     """
+    import os
+
+    from salvager.config.config_yaml import load_config
     from salvager.config.env import load_env_or_exit
+    from salvager.observability.logging import configure_log_format
     from salvager.orchestration.composer import (
         NoMarketplacesEnabledError,
         compose_daemon,
     )
+
+    # Apply the log-format choice as early as possible so the very first
+    # daemon log line already honours it. Config takes a quick pre-load
+    # for this; compose_daemon re-reads it (yaml parse is microseconds).
+    config_for_format = load_config(config_path)
+    resolved_format = _resolve_log_format(
+        cli=log_format_cli,
+        env=os.environ.get("SALVAGER_LOG_FORMAT"),
+        config=config_for_format.logging.format,
+    )
+    configure_log_format(resolved_format)
 
     log = get_logger("daemon")
     env = load_env_or_exit(env_path)

@@ -8,9 +8,10 @@ import subprocess
 import sys
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
-from salvager.cli.app import app
+from salvager.cli.app import _resolve_log_format, app
 
 
 @pytest.fixture
@@ -197,3 +198,33 @@ def test_unknown_subcommand_exits_with_usage_error(runner: CliRunner) -> None:
 def test_unknown_flag_exits_with_usage_error(runner: CliRunner) -> None:
     result = runner.invoke(app, ["version", "--bogus-flag"])
     assert result.exit_code == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Log format resolver — CLI > env > config > default precedence
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_resolve_log_format_cli_wins_over_env_and_config() -> None:
+    chosen = _resolve_log_format(cli="pretty", env="json", config="json")
+    assert chosen == "pretty"
+
+
+def test_resolve_log_format_env_wins_over_config() -> None:
+    chosen = _resolve_log_format(cli=None, env="pretty", config="json")
+    assert chosen == "pretty"
+
+
+def test_resolve_log_format_falls_back_to_config() -> None:
+    chosen = _resolve_log_format(cli=None, env=None, config="pretty")
+    assert chosen == "pretty"
+
+
+def test_resolve_log_format_invalid_cli_raises_with_source() -> None:
+    with pytest.raises(typer.BadParameter, match="--log-format"):
+        _resolve_log_format(cli="verbose", env=None, config="json")
+
+
+def test_resolve_log_format_invalid_env_raises_with_source() -> None:
+    with pytest.raises(ValueError, match="SALVAGER_LOG_FORMAT"):
+        _resolve_log_format(cli=None, env="verbose", config="json")
