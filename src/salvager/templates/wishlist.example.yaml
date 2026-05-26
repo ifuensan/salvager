@@ -80,6 +80,35 @@ entries:
       enabled: false
       max_price_eur: null
 
+  # ─── Example 2b: HC530 14TB SAS variant ────────────────────────────────
+  # Same drive family as Example 2, but the SAS PN (12Gb/s, dual-port).
+  # Needs a SAS HBA (e.g. LSI 9211-8i) + SFF-8087→SATA breakout cable —
+  # one-time hardware cost outside the per-listing ceiling. Secondhand
+  # SAS units run cheaper than the SATA PN because most buyers skip the
+  # HBA friction, so this entry captures that arbitrage band.
+  #
+  # This is also the canonical example of how to spec two variants of
+  # the same drive family: ONE entry per SKU, each with its own ``ref``
+  # and PN-specific keywords. Don't try to merge variants into a single
+  # entry — the wishlist treats ``ref`` as the unique key for dedup and
+  # alert routing.
+  - manufacturer: Western Digital
+    model: Ultrastar DC HC530 14TB SAS
+    ref: WUH721414AL5204
+    type: hdd
+    max_price_solo: 140.00
+    max_price_in_device: null
+    keywords:
+      - "WUH721414AL5204"
+      - "HC530 SAS 14TB"
+      - "Ultrastar 14TB SAS"
+      - "14TB SAS"
+    container_keywords: []
+    confidence_threshold: medium
+    phase2:
+      enabled: false
+      max_price_eur: null
+
   # ─── Example 3: DDR4 RAM, direct + container (laptop / mini-PC) ────────
   - manufacturer: Crucial
     model: CT16G4DFRA32A 16GB DDR4-3200

@@ -100,7 +100,7 @@ class SqliteLlmEvalCache:
         self._ttl_normal = ttl_normal
         self._ttl_low_confidence = ttl_low_confidence
         self._clock = clock
-        self._write_lock = asyncio.Lock()
+        self._db_lock = asyncio.Lock()
         self._connection = open_connection(self._db_path)
         # CREATE TABLE IF NOT EXISTS is idempotent — safe to run on every
         # construction. No migration runner because the cache is
@@ -109,7 +109,7 @@ class SqliteLlmEvalCache:
         self._log = get_logger("adapter.llm_cache_sqlite")
 
     async def close(self) -> None:
-        async with self._write_lock:
+        async with self._db_lock:
             await asyncio.to_thread(self._connection.close)
 
     # ─────────────────────────────────────────────────────────────────
@@ -152,7 +152,19 @@ class SqliteLlmEvalCache:
                 datetime.fromisoformat(row["cached_at"]),
             )
 
-        row = await asyncio.to_thread(_read)
+        # Hold _db_lock around the read because the poll loop's
+        # per-listing semaphore spawns up to 8 evaluations in parallel.
+        # All 8 call cache.get first, and asyncio.to_thread dispatches
+        # to different worker threads. Python's sqlite3 with
+        # check_same_thread=False permits cross-thread sharing of a
+        # connection BUT requires the caller to serialize access —
+        # concurrent execute() on the same Connection raises
+        # InterfaceError ("Recursive use of cursors not allowed" /
+        # "Cannot operate on a closed database"). The set() path was
+        # already serialized; without locking get() too, 8-way parallel
+        # reads race against each other and against any in-flight set.
+        async with self._db_lock:
+            row = await asyncio.to_thread(_read)
         if row is None:
             return None
 
@@ -228,7 +240,7 @@ class SqliteLlmEvalCache:
                 ),
             )
 
-        async with self._write_lock:
+        async with self._db_lock:
             await asyncio.to_thread(_write)
 
     # ─────────────────────────────────────────────────────────────────

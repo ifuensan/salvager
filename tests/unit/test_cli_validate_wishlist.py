@@ -36,7 +36,7 @@ def test_valid_wishlist_returns_success(runner: CliRunner, example_path: Path) -
     result = runner.invoke(app, ["validate-wishlist", "--path", str(example_path)])
     assert result.exit_code == 0
     assert "wishlist.yaml is valid" in result.stdout
-    assert "3 entries" in result.stdout
+    assert "4 entries" in result.stdout
     assert "0 with Phase 2 enabled" in result.stdout
 
 
@@ -49,7 +49,7 @@ def test_valid_wishlist_json_output(runner: CliRunner, example_path: Path) -> No
     payload = json.loads(result.stdout.strip())
     assert payload == {
         "valid": True,
-        "entry_count": 3,
+        "entry_count": 4,
         "phase2_enabled_count": 0,
     }
 

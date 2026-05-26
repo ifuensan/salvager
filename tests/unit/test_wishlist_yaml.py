@@ -45,7 +45,7 @@ def test_load_then_save_is_byte_identical(example_path: Path) -> None:
 
 def test_loaded_wishlist_has_expected_typed_shape(example_path: Path) -> None:
     wishlist = load_wishlist(example_path)
-    assert len(wishlist.entries) == 3
+    assert len(wishlist.entries) == 4
     first = wishlist.entries[0]
     assert first.manufacturer == "Western Digital"
     assert first.model == "WD Red Plus 4TB"
