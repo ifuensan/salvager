@@ -479,3 +479,85 @@ def test_prompt_version_is_exported_from_domain_prompts() -> None:
 
     assert isinstance(PROMPT_VERSION, str)
     assert PROMPT_VERSION  # non-empty
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Concurrency — `get` must serialize against itself and against `set`
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_concurrent_gets_do_not_race(tmp_path: Path) -> None:
+    """Regression for the daemon's `llm_eval_failed error_class=InterfaceError`.
+
+    The poll loop spawns up to 8 evaluations in parallel (NFR-P3). Each
+    one starts with `cache.get`, and asyncio.to_thread dispatches every
+    call to its own worker thread. With `check_same_thread=False`, the
+    sqlite3 module permits cross-thread access to a single Connection
+    BUT the caller must serialize execute() calls — otherwise Python
+    raises `sqlite3.InterfaceError` ("Recursive use of cursors not
+    allowed" / "Cannot operate on a closed database").
+
+    Without the `_db_lock` around the read in `get`, this test fires the
+    race deterministically once you push concurrency past one worker.
+    """
+    import asyncio as _asyncio
+
+    clock = _FrozenClock()
+    cache = _make_cache(tmp_path, clock=clock)
+    try:
+        evaluation = _evaluation()
+        # Pre-populate so half the reads hit and half miss; both code
+        # paths inside `get` execute the same way, so it doesn't change
+        # the race shape, but it does exercise the post-read JSON parse.
+        seeded_url = "https://wallapop.com/item/seeded"
+        await cache.set(seeded_url, "v1", prompt_text="x", evaluation=evaluation)
+
+        async def hit() -> object:
+            return await cache.get(seeded_url, "v1")
+
+        async def miss() -> object:
+            return await cache.get("https://wallapop.com/item/missing", "v1")
+
+        # 32 concurrent calls — well past the 8 the daemon spawns, so the
+        # race window is wide enough to fire reliably if the lock is off.
+        coros = [hit() if i % 2 == 0 else miss() for i in range(32)]
+        results = await _asyncio.gather(*coros, return_exceptions=True)
+
+        for r in results:
+            assert not isinstance(r, BaseException), f"concurrent get raised: {r!r}"
+
+        # Sanity: hits returned a real evaluation, misses returned None.
+        hits = [r for i, r in enumerate(results) if i % 2 == 0]
+        misses = [r for i, r in enumerate(results) if i % 2 == 1]
+        assert all(r is not None for r in hits)
+        assert all(r is None for r in misses)
+    finally:
+        await cache.close()
+
+
+async def test_concurrent_get_and_set_do_not_race(tmp_path: Path) -> None:
+    """Same race surface, but mixing reads and writes on the same Connection."""
+    import asyncio as _asyncio
+
+    clock = _FrozenClock()
+    cache = _make_cache(tmp_path, clock=clock)
+    try:
+        evaluation = _evaluation()
+        urls = [f"https://wallapop.com/item/{i}" for i in range(16)]
+
+        async def writer(url: str) -> None:
+            await cache.set(url, "v1", prompt_text="p", evaluation=evaluation)
+
+        async def reader(url: str) -> object:
+            return await cache.get(url, "v1")
+
+        coros = []
+        for url in urls:
+            coros.append(writer(url))
+            coros.append(reader(url))
+
+        results = await _asyncio.gather(*coros, return_exceptions=True)
+        for r in results:
+            assert not isinstance(r, BaseException), f"concurrent op raised: {r!r}"
+    finally:
+        await cache.close()
