@@ -12,7 +12,7 @@ The `BuyOrchestrator` does not auto-buy. It exists only to fulfil an operator's 
 
 - One typed `BuyOrchestrator` instance available to the `CallbackDispatcher` after `compose_daemon` returns, so `buy` callback taps actually fire the checkout flow.
 - Per-marketplace browser dispatch: a Wallapop listing's Comprar uses `WallapopPayFlow`, an eBay listing's uses `EbayCheckoutFlow`. The orchestrator sees a single `BrowserSession` regardless.
-- A `WishlistLoader` closure that reads the current wishlist state when the operator taps, not a snapshot captured at compose time — so an entry the operator removed or retuned between alert and tap is respected.
+- A `WishlistLoader` closure that reads the current wishlist state when the operator taps, not a snapshot captured at compose time — so an entry the operator removed or edited between alert and tap is respected.
 - Composer stays a single declarative file: every new collaborator is built inline in `compose_daemon` (no new module just to host a builder), with one exception (the dispatching browser wrapper, justified below).
 - Zero behaviour change for operators who keep every entry at `phase2.enabled=false` (today's example default).
 

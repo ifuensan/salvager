@@ -56,7 +56,7 @@ The `BrowserSession` instance passed to `BuyOrchestrator` SHALL select the per-m
 
 ### Requirement: Wishlist Loader Reflects Operator Edits Between Alert And Tap
 
-The `wishlist_loader` collaborator the `BuyOrchestrator` receives SHALL resolve an `EntryKey` against the current wishlist file contents at the moment of the buy tap. An entry the operator removed, retuned, or whose `phase2.enabled` flag the operator flipped between the alert dispatch and the Comprar tap SHALL be observed in that updated state by the orchestrator's preflight.
+The `wishlist_loader` collaborator the `BuyOrchestrator` receives SHALL resolve an `EntryKey` against the current wishlist file contents at the moment of the buy tap. An entry the operator removed, edited, or whose `phase2.enabled` flag the operator flipped between the alert dispatch and the Comprar tap SHALL be observed in that updated state by the orchestrator's preflight.
 
 #### Scenario: Operator disables a Phase 2 entry between alert and tap
 
@@ -76,7 +76,7 @@ The `wishlist_loader` collaborator the `BuyOrchestrator` receives SHALL resolve 
 
 ### Requirement: Circuit Breaker Halts Further Buys After Consecutive Failures
 
-When the configured number of consecutive Phase 2 buy attempts fail, the circuit breaker SHALL open. With the breaker open, subsequent Comprar taps SHALL abort the buy before any checkout flow runs. The breaker SHALL only close again after the operator-defined cooldown elapses or the operator explicitly resets it (per the existing Phase 2 circuit-breaker spec).
+When the configured number of consecutive Phase 2 buy attempts fail, the circuit breaker SHALL open. With the breaker open, subsequent Comprar taps SHALL abort the buy before any checkout flow runs. The breaker has no time-based auto-recovery: it SHALL remain open until the operator explicitly lifts the lockout via `salvager phase2 enable <entry>` (which calls `Phase2AuditWriter.clear_global_disable`). A Phase 2 success while the breaker is open still resets the consecutive-failure counter, but the global-disable flag is independent and only the operator-action path clears it.
 
 #### Scenario: Failure threshold reached opens the breaker
 

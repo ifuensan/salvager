@@ -10,7 +10,7 @@ This is a wiring change, not an architectural one. There is no auto-buy mode in 
 
 - Instantiate `BuyOrchestrator` inside `compose_daemon` with all 9 dependencies and pass it to `CallbackDispatcher` instead of `None`. Drop the `buy_orchestrator_not_wired` deferred-PR comment at `composer.py:216`.
 - Introduce a small `MarketplaceDispatchingBrowser(BrowserSession)` wrapper that holds a `WallapopPayFlow` + `EbayCheckoutFlow` pair and routes each call to the right adapter based on `listing.marketplace`. The `BuyOrchestrator` interface takes a single `BrowserSession`; the dispatching wrapper is how compose_daemon gives it both marketplaces in one slot.
-- Define a `WishlistLoader` closure in compose_daemon that re-reads the wishlist file by `EntryKey` so the orchestrator's preflight sees the operator's latest edits (important if the operator removed or retuned an entry between alert and tap).
+- Define a `WishlistLoader` closure in compose_daemon that re-reads the wishlist file by `EntryKey` so the orchestrator's preflight sees the operator's latest edits (important if the operator removed or edited an entry between alert and tap).
 - Wire the rest of the deps from already-existing concrete classes: `Phase2Preflight`, `Reconciler`, `CircuitBreaker`, `Phase2AuditWriter`, `Reporter`. The orchestrator's `telegram_surface` and `store` reuse the instances compose_daemon already builds for Phase 1.
 - Tests cover the wiring shape (composer hands BuyOrchestrator with 9 deps to the dispatcher) and the marketplace-dispatch wrapper (Wallapop listing → WallapopPayFlow, eBay listing → EbayCheckoutFlow).
 
