@@ -68,6 +68,7 @@ from salvager.adapters.wallapop_tinyfish.fetcher import (
 from salvager.config.config_yaml import ConfigModel, load_config
 from salvager.config.env import EnvSettings
 from salvager.config.wishlist_yaml import load_wishlist
+from salvager.domain.listing import Listing, SearchQuery
 from salvager.domain.prompts import PROMPT_VERSION
 from salvager.domain.wishlist import Wishlist, WishlistEntry
 from salvager.interfaces.listing_evaluator import ListingEvaluator
@@ -114,11 +115,15 @@ class ComposedDaemon:
     ``telegram`` + ``dispatcher`` are exposed so the daemon entry-point
     can run :meth:`TelegramSurface.listen_callbacks` concurrently with
     the scheduler — view/skip/snooze taps drive Phase 1 audit + state
-    + keyboard edits through the dispatcher. ``buy_orchestrator`` is
-    intentionally not wired at this layer yet; the dispatcher's
-    ``buy_orchestrator=None`` defence-in-depth keeps Phase 2 buy taps
-    from blowing up the listener (audit row + in-flight badge land,
-    purchase is logged ``buy_orchestrator_not_wired`` and held).
+    + keyboard edits through the dispatcher. The dispatcher holds a
+    fully-wired :class:`BuyOrchestrator`, so Phase 2 Comprar taps
+    execute a real checkout (gated by ``phase2.enabled`` per wishlist
+    entry).
+
+    The ``_phase2_*`` fields are the OS-resource handles owned by the
+    buy orchestrator's collaborators (two SQLite connections + two
+    :class:`AsyncTinyFish` HTTP clients). They live on the dataclass
+    so :meth:`aclose` can close them on shutdown.
     """
 
     daemon: Daemon
@@ -126,10 +131,18 @@ class ComposedDaemon:
     cache: SqliteLlmEvalCache
     telegram: TelegramBotSurface
     dispatcher: CallbackDispatcher
+    _phase2_audit_writer: Phase2AuditWriter
+    _phase2_state_reader: SqlitePhase2StateReader
+    _phase2_wallapop_pay: WallapopPayFlow
+    _phase2_ebay_checkout: EbayCheckoutFlow
 
     async def aclose(self) -> None:
         """Close every adapter that owns OS resources. Idempotent —
         the store already guards double-close internally."""
+        await self._phase2_wallapop_pay.close()
+        await self._phase2_ebay_checkout.close()
+        await self._phase2_audit_writer.close()
+        await self._phase2_state_reader.close()
         await self.cache.close()
         await self.store.close()
 
@@ -181,6 +194,18 @@ def compose_daemon(
 
     scheduler: Scheduler = AsyncioScheduler()
 
+    # Credential-gated marketplace enablement. Both the polling job and
+    # the Phase 2 reconciler share these paths, so we resolve them once.
+    wallapop_cookies_path = data_dir / WALLAPOP_COOKIES_RELPATH
+    ebay_tokens_path = data_dir / EBAY_OAUTH_TOKENS_RELPATH
+    wallapop_enabled = wallapop_cookies_path.exists()
+    ebay_enabled = ebay_tokens_path.exists()
+
+    # One shared :class:`DailyQuotaTracker` for eBay — the polling job
+    # and the Phase 2 reconciler both hit the same daily quota, so the
+    # in-memory counter must be a single instance across them.
+    ebay_quota = DailyQuotaTracker(config.ebay.daily_request_quota) if ebay_enabled else None
+
     wallapop_job = _build_wallapop_job(
         env=env,
         config=config,
@@ -194,12 +219,12 @@ def compose_daemon(
     )
     ebay_job = _build_ebay_job(
         env=env,
-        config=config,
         data_dir=data_dir,
         wishlist=wishlist,
         evaluator=evaluator,
         store=store,
         telegram=telegram,
+        quota=ebay_quota,
         log=log,
     )
 
@@ -223,7 +248,7 @@ def compose_daemon(
     # on a Phase 2 alert; it never auto-buys. Marketplace dispatch lives
     # in the per-marketplace wrappers (see marketplace_dispatch.py) so
     # the orchestrator can hold a single browser + single fetcher.
-    buy_orchestrator = _build_buy_orchestrator(
+    phase2 = _build_buy_orchestrator(
         env=env,
         config=config,
         data_dir=data_dir,
@@ -231,11 +256,14 @@ def compose_daemon(
         store=store,
         telegram=telegram,
         reporter=reporter,
+        wallapop_cookies_path=wallapop_cookies_path if wallapop_enabled else None,
+        ebay_tokens_path=ebay_tokens_path if ebay_enabled else None,
+        ebay_quota=ebay_quota,
     )
     dispatcher = CallbackDispatcher(
         store=store,
         surface=telegram,
-        buy_orchestrator=buy_orchestrator,
+        buy_orchestrator=phase2.orchestrator,
         snooze_hours=DEFAULT_SNOOZE_HOURS,
     )
 
@@ -245,6 +273,10 @@ def compose_daemon(
         cache=cache,
         telegram=telegram,
         dispatcher=dispatcher,
+        _phase2_audit_writer=phase2.audit_writer,
+        _phase2_state_reader=phase2.state_reader,
+        _phase2_wallapop_pay=phase2.wallapop_pay,
+        _phase2_ebay_checkout=phase2.ebay_checkout,
     )
 
 
@@ -370,17 +402,22 @@ def _build_wallapop_job(
 def _build_ebay_job(
     *,
     env: EnvSettings,
-    config: ConfigModel,
     data_dir: Path,
     wishlist: Wishlist,
     evaluator: CachingListingEvaluator,
     store: SqliteStore,
     telegram: TelegramBotSurface,
+    quota: DailyQuotaTracker | None,
     log: object,
 ) -> Callable[[], Awaitable[None]] | None:
-    """Build the eBay poll closure, or return None when OAuth tokens are missing."""
+    """Build the eBay poll closure, or return None when OAuth tokens are missing.
+
+    ``quota`` is the daily-request tracker shared with the Phase 2
+    reconciler (built once in :func:`compose_daemon`). ``None`` is the
+    same gate as the file check — eBay is disabled.
+    """
     tokens_path = data_dir / EBAY_OAUTH_TOKENS_RELPATH
-    if not tokens_path.exists():
+    if quota is None or not tokens_path.exists():
         log.info(  # type: ignore[attr-defined]
             "ebay_disabled_no_tokens",
             extra={"tokens_path": str(tokens_path)},
@@ -388,7 +425,6 @@ def _build_ebay_job(
         return None
 
     token_store = OAuthTokenStore(tokens_path)
-    quota = DailyQuotaTracker(config.ebay.daily_request_quota)
     fetcher: PageFetcher = EbayApiFetcher(
         token_store=token_store,
         app_id=env.EBAY_APP_ID,
@@ -416,6 +452,43 @@ def _hours(n: int) -> timedelta:
 # ─────────────────────────────────────────────────────────────────────────
 # Phase 2 buy orchestrator wiring
 # ─────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _Phase2Bundle:
+    """Output of :func:`_build_buy_orchestrator` — the orchestrator plus
+    the OS-resource handles that :class:`ComposedDaemon` closes on
+    shutdown (two SQLite connections + two AsyncTinyFish clients)."""
+
+    orchestrator: BuyOrchestrator
+    audit_writer: Phase2AuditWriter
+    state_reader: SqlitePhase2StateReader
+    wallapop_pay: WallapopPayFlow
+    ebay_checkout: EbayCheckoutFlow
+
+
+class _UnavailableMarketplaceFetcher(PageFetcher):
+    """``PageFetcher`` stand-in for a marketplace whose credentials are
+    absent at composition time. Construction is side-effect-free; every
+    method raises so the code path is loud if it gets exercised. The
+    dispatcher should never route here in practice — alerts only come
+    from polled marketplaces, and the reconciler's pre-buy refetch keys
+    off the listing URL's host."""
+
+    def __init__(self, marketplace: str) -> None:
+        self._marketplace = marketplace
+
+    async def search(self, query: SearchQuery) -> list[Listing]:  # noqa: ARG002
+        raise RuntimeError(
+            f"reconciler tried to search() {self._marketplace} but no "
+            f"{self._marketplace} credentials are configured for this daemon"
+        )
+
+    async def fetch(self, listing_url: str) -> Listing:
+        raise RuntimeError(
+            f"reconciler tried to fetch({listing_url!r}) but no "
+            f"{self._marketplace} credentials are configured for this daemon"
+        )
 
 
 def _make_wishlist_loader(wishlist_path: Path) -> WishlistLoader:
@@ -455,17 +528,25 @@ def _build_buy_orchestrator(
     store: SqliteStore,
     telegram: TelegramBotSurface,
     reporter: DegradationReporter,
-) -> BuyOrchestrator:
+    wallapop_cookies_path: Path | None,
+    ebay_tokens_path: Path | None,
+    ebay_quota: DailyQuotaTracker | None,
+) -> _Phase2Bundle:
     """Wire the Phase 2 buy orchestrator with its nine collaborators.
 
     The orchestrator drives one buy per operator Comprar tap — no
-    autonomous trigger anywhere in the pipeline. Construction is
-    side-effect-free; the marketplace adapters lazy-load their state
-    (Wallapop cookies, eBay OAuth tokens) on first use, so a deployment
-    that lacks credentials for one marketplace can still build the
-    orchestrator — the missing side's adapter will fail at call time
-    with a typed BuyFailure, which the operator only ever sees if the
-    corresponding marketplace's poll cycle is also running.
+    autonomous trigger anywhere in the pipeline.
+
+    ``wallapop_cookies_path`` and ``ebay_tokens_path`` reflect which
+    marketplaces the daemon was composed with: a ``None`` value swaps
+    that marketplace's reconciliation fetcher for a stub that raises
+    if invoked, so the orchestrator builds cleanly on single-marketplace
+    deployments. The dispatcher never routes to a missing side in
+    practice because alerts only come from polled marketplaces.
+
+    ``ebay_quota`` is the shared :class:`DailyQuotaTracker` from
+    :func:`compose_daemon` so polling and reconciliation charge a
+    single in-memory counter against the same daily limit.
     """
     db_path = db_path_under(data_dir)
     audit_writer = Phase2AuditWriter(db_path)
@@ -487,16 +568,24 @@ def _build_buy_orchestrator(
     # Reusing the poll-time instances would require returning them from
     # the per-marketplace builders, which is a bigger refactor for no
     # operational benefit.
-    wallapop_recon_fetcher: PageFetcher = WallapopApiFetcher(
-        cookies_path=data_dir / WALLAPOP_COOKIES_RELPATH,
-        latitude=config.wallapop.latitude,
-        longitude=config.wallapop.longitude,
+    wallapop_recon_fetcher: PageFetcher = (
+        WallapopApiFetcher(
+            cookies_path=wallapop_cookies_path,
+            latitude=config.wallapop.latitude,
+            longitude=config.wallapop.longitude,
+        )
+        if wallapop_cookies_path is not None
+        else _UnavailableMarketplaceFetcher("wallapop")
     )
-    ebay_recon_fetcher: PageFetcher = EbayApiFetcher(
-        token_store=OAuthTokenStore(data_dir / EBAY_OAUTH_TOKENS_RELPATH),
-        app_id=env.EBAY_APP_ID,
-        cert_id=env.EBAY_CERT_ID,
-        quota=DailyQuotaTracker(config.ebay.daily_request_quota),
+    ebay_recon_fetcher: PageFetcher = (
+        EbayApiFetcher(
+            token_store=OAuthTokenStore(ebay_tokens_path),
+            app_id=env.EBAY_APP_ID,
+            cert_id=env.EBAY_CERT_ID,
+            quota=ebay_quota,
+        )
+        if ebay_tokens_path is not None and ebay_quota is not None
+        else _UnavailableMarketplaceFetcher("ebay")
     )
     reconciler = Reconciler(
         cross_source_fetcher=MarketplaceDispatchingPageFetcher(
@@ -509,12 +598,14 @@ def _build_buy_orchestrator(
 
     # Both browser flows share the TinyFish API key — marketplace login
     # happens inside the browser session, not at construction.
+    wallapop_pay = WallapopPayFlow(api_key=env.TINYFISH_API_KEY)
+    ebay_checkout = EbayCheckoutFlow(api_key=env.TINYFISH_API_KEY)
     browser = MarketplaceDispatchingBrowser(
-        wallapop=WallapopPayFlow(api_key=env.TINYFISH_API_KEY),
-        ebay=EbayCheckoutFlow(api_key=env.TINYFISH_API_KEY),
+        wallapop=wallapop_pay,
+        ebay=ebay_checkout,
     )
 
-    return BuyOrchestrator(
+    orchestrator = BuyOrchestrator(
         preflight=preflight,
         reconciler=reconciler,
         browser=browser,
@@ -524,6 +615,13 @@ def _build_buy_orchestrator(
         store=store,
         reporter=reporter,
         wishlist_loader=_make_wishlist_loader(wishlist_path),
+    )
+    return _Phase2Bundle(
+        orchestrator=orchestrator,
+        audit_writer=audit_writer,
+        state_reader=state_reader,
+        wallapop_pay=wallapop_pay,
+        ebay_checkout=ebay_checkout,
     )
 
 

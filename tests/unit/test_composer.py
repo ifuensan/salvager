@@ -131,6 +131,15 @@ def stub_adapters(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "EbayApiFetcher",
         "OAuthTokenStore",
         "DailyQuotaTracker",
+        # Phase 2 collaborators — without these stubs the test environment
+        # opens real SQLite connections + AsyncTinyFish HTTP clients at
+        # composition time, defeating the isolation the fixture is for.
+        "Phase2AuditWriter",
+        "SqlitePhase2StateReader",
+        "WallapopPayFlow",
+        "EbayCheckoutFlow",
+        "MarketplaceDispatchingBrowser",
+        "MarketplaceDispatchingPageFetcher",
     ):
         stub_class = type(name, (_Stub,), {})
         monkeypatch.setattr(composer_module, name, stub_class)
@@ -175,6 +184,11 @@ def test_only_wallapop_cookies_present_builds_wallapop_job(
         # Wallapop is wired; eBay is not.
         assert composed.daemon._wallapop_job is not None
         assert composed.daemon._ebay_job is None
+        # Regression: EbayApiFetcher must not be constructed on Wallapop-only
+        # deployments — its __init__ reads the OAuth tokens file eagerly,
+        # so building it without tokens crashes the whole daemon.
+        assert "EbayApiFetcher" not in stub_adapters
+        assert "OAuthTokenStore" not in stub_adapters
     finally:
         # Composed wraps a real SqliteStore + SqliteLlmEvalCache; close them.
         import asyncio
@@ -199,6 +213,13 @@ def test_only_ebay_tokens_present_builds_ebay_job(
     try:
         assert composed.daemon._wallapop_job is None
         assert composed.daemon._ebay_job is not None
+        # Symmetric regression: WallapopApiFetcher must not be constructed
+        # on eBay-only deployments. WallapopApiFetcher happens to lazy-load
+        # cookies so the daemon wouldn't crash, but constructing it leaves
+        # a stale handle pointing at a non-existent file.
+        assert "WallapopApiFetcher" not in stub_adapters
+        # Single shared DailyQuotaTracker — one instance, not two.
+        assert len(stub_adapters.get("DailyQuotaTracker", [])) == 1
     finally:
         import asyncio
 
