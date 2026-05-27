@@ -18,6 +18,7 @@ from salvager.adapters.tinyfish_browser.marketplace_dispatch import (
     MarketplaceDispatchingBrowser,
     MarketplaceDispatchingPageFetcher,
 )
+from salvager.domain.errors import BuyFailureReason
 from salvager.domain.listing import Listing, Marketplace, SearchQuery
 from salvager.interfaces.browser_session import BrowserSession, BuyFailure, BuyResult
 from salvager.interfaces.page_fetcher import PageFetcher
@@ -39,7 +40,7 @@ def _listing(marketplace: Marketplace, listing_id: str = "abc") -> Listing:
 
 
 def _failure(detail: str) -> BuyFailure:
-    return BuyFailure(reason="marketplace_error", ctx={"detail": detail})
+    return BuyFailure(reason=BuyFailureReason.marketplace_error, ctx={"detail": detail})
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -153,6 +154,23 @@ async def test_fetcher_fetch_unknown_host_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="cannot route fetch"):
         await dispatcher.fetch("https://amazon.com/dp/B0XXX")
+
+
+async def test_fetcher_fetch_marketplace_string_in_path_does_not_dispatch() -> None:
+    """Routing keys off the parsed hostname, not substring match — so a
+    URL that merely *mentions* a marketplace domain in its path or query
+    string is rejected. Defence-in-depth against a future caller passing
+    an externally-sourced URL into the reconciliation path."""
+    wallapop = _RecordingFetcher("wallapop")
+    ebay = _RecordingFetcher("ebay")
+    dispatcher = MarketplaceDispatchingPageFetcher(wallapop=wallapop, ebay=ebay)
+
+    with pytest.raises(ValueError, match="cannot route fetch"):
+        await dispatcher.fetch("https://attacker.example/?next=ebay.com/itm/1")
+    with pytest.raises(ValueError, match="cannot route fetch"):
+        await dispatcher.fetch("https://notwallapop.com/item/123")
+    assert wallapop.fetches == []
+    assert ebay.fetches == []
 
 
 async def test_fetcher_search_unknown_marketplace_raises_value_error() -> None:
