@@ -16,17 +16,24 @@ cross-marketplace knowledge.
 from __future__ import annotations
 
 from decimal import Decimal
+from urllib.parse import urlparse
 
 from salvager.domain.listing import Listing, SearchQuery
 from salvager.interfaces.browser_session import BrowserSession, BuyResult
 from salvager.interfaces.page_fetcher import PageFetcher
 
-# Host substrings used to route ``fetch(listing_url)`` calls when the
-# only information we have is the URL. Listings from the primary search
-# path always populate ``listing.marketplace``; the URL fallback is for
-# code paths that pass a bare URL (e.g. the reconciler's pre-buy refetch).
+# Apex hosts used to route ``fetch(listing_url)`` calls when the only
+# information we have is the URL. Listings from the primary search path
+# always populate ``listing.marketplace``; the URL fallback is for code
+# paths that pass a bare URL (e.g. the reconciler's pre-buy refetch).
+# Matching is exact or proper-suffix on the parsed hostname so that
+# ``https://attacker.example/?next=ebay.com`` does not dispatch to eBay.
 _WALLAPOP_HOSTS = ("wallapop.com",)
 _EBAY_HOSTS = ("ebay.es", "ebay.com")
+
+
+def _host_matches(host: str, allowed: tuple[str, ...]) -> bool:
+    return any(host == apex or host.endswith(f".{apex}") for apex in allowed)
 
 
 class MarketplaceDispatchingBrowser(BrowserSession):
@@ -73,9 +80,10 @@ class MarketplaceDispatchingPageFetcher(PageFetcher):
         )
 
     async def fetch(self, listing_url: str) -> Listing:
-        if any(host in listing_url for host in _WALLAPOP_HOSTS):
+        host = (urlparse(listing_url).hostname or "").lower()
+        if _host_matches(host, _WALLAPOP_HOSTS):
             return await self._wallapop.fetch(listing_url)
-        if any(host in listing_url for host in _EBAY_HOSTS):
+        if _host_matches(host, _EBAY_HOSTS):
             return await self._ebay.fetch(listing_url)
         raise ValueError(
             f"cannot route fetch({listing_url!r}) — host does not match "
