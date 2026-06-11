@@ -90,6 +90,20 @@ class MarketplaceDispatchingPageFetcher(PageFetcher):
             "any known marketplace (wallapop.com, ebay.es, ebay.com)"
         )
 
+    async def aclose(self) -> None:
+        """Close both inner fetchers that own OS resources.
+
+        The :class:`PageFetcher` port doesn't declare ``aclose`` — only
+        the concrete adapters that hold an ``httpx`` client do (the eBay
+        reconciliation fetcher's client is the live case) — so we close
+        defensively, skipping inners that don't expose the method.
+        Idempotent: adapters guard double-close internally.
+        """
+        for inner in (self._wallapop, self._ebay):
+            aclose = getattr(inner, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
 
 __all__ = [
     "MarketplaceDispatchingBrowser",

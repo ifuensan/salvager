@@ -123,6 +123,9 @@ def stub_adapters(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         async def close(self) -> None:
             return None
 
+        async def aclose(self) -> None:
+            return None
+
     for name in (
         "GeminiFlashEvaluator",
         "TelegramBotSurface",
@@ -305,6 +308,66 @@ def test_composer_wires_telegram_listener_dispatcher_with_buy_orchestrator(
         import asyncio
 
         asyncio.run(composed.aclose())
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ComposedDaemon.aclose — one failing close must not leak the rest
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class _Closer:
+    """Records calls; optionally raises on close to exercise isolation."""
+
+    def __init__(self, name: str, *, fail: bool = False) -> None:
+        self.name = name
+        self._fail = fail
+        self.closed = 0
+
+    async def close(self) -> None:
+        self.closed += 1
+        if self._fail:
+            raise RuntimeError(f"{self.name} close failed")
+
+    async def aclose(self) -> None:
+        await self.close()
+
+
+def test_aclose_isolates_failures_and_closes_every_handle() -> None:
+    """A raising close mid-sequence must not stop the remaining handles
+    from closing; the first error is re-raised so shutdown still surfaces
+    it. Guards against a flaky adapter leaking SQLite/HTTP handles."""
+    import asyncio
+
+    from salvager.orchestration.composer import ComposedDaemon
+
+    # The third closer in aclose order (recon_fetcher) raises.
+    wallapop_pay = _Closer("wallapop_pay")
+    ebay_checkout = _Closer("ebay_checkout")
+    recon = _Closer("recon", fail=True)
+    audit = _Closer("audit")
+    state = _Closer("state")
+    cache = _Closer("cache")
+    store = _Closer("store")
+
+    composed = ComposedDaemon(
+        daemon=None,  # type: ignore[arg-type]
+        store=store,  # type: ignore[arg-type]
+        cache=cache,  # type: ignore[arg-type]
+        telegram=None,  # type: ignore[arg-type]
+        dispatcher=None,  # type: ignore[arg-type]
+        _phase2_audit_writer=audit,  # type: ignore[arg-type]
+        _phase2_state_reader=state,  # type: ignore[arg-type]
+        _phase2_wallapop_pay=wallapop_pay,  # type: ignore[arg-type]
+        _phase2_ebay_checkout=ebay_checkout,  # type: ignore[arg-type]
+        _phase2_recon_fetcher=recon,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="recon close failed"):
+        asyncio.run(composed.aclose())
+
+    # Every handle was closed despite the mid-sequence failure.
+    for closer in (wallapop_pay, ebay_checkout, recon, audit, state, cache, store):
+        assert closer.closed == 1, f"{closer.name} was not closed"
 
 
 # ─────────────────────────────────────────────────────────────────────────

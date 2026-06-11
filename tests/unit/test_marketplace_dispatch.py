@@ -185,5 +185,40 @@ async def test_fetcher_search_unknown_marketplace_raises_value_error() -> None:
         await dispatcher.search(query)
 
 
+class _CloseableFetcher(_RecordingFetcher):
+    def __init__(self, tag: str) -> None:
+        super().__init__(tag)
+        self.closed = 0
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
+async def test_fetcher_aclose_delegates_to_inners_that_own_resources() -> None:
+    """``aclose`` closes the eBay refetch HTTP client (and any other
+    inner that exposes ``aclose``) so the daemon doesn't leak it on
+    shutdown."""
+    wallapop = _CloseableFetcher("wallapop")
+    ebay = _CloseableFetcher("ebay")
+    dispatcher = MarketplaceDispatchingPageFetcher(wallapop=wallapop, ebay=ebay)
+
+    await dispatcher.aclose()
+
+    assert wallapop.closed == 1
+    assert ebay.closed == 1
+
+
+async def test_fetcher_aclose_skips_inners_without_aclose() -> None:
+    """A stub fetcher (the single-marketplace stand-in) has no ``aclose``
+    — ``aclose`` must not blow up trying to close it."""
+    wallapop = _RecordingFetcher("wallapop")  # no aclose attribute
+    ebay = _CloseableFetcher("ebay")
+    dispatcher = MarketplaceDispatchingPageFetcher(wallapop=wallapop, ebay=ebay)
+
+    await dispatcher.aclose()  # must not raise
+
+    assert ebay.closed == 1
+
+
 # Silence unused-import warning when type-checkers don't see Any usage.
 _ = Any

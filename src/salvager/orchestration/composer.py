@@ -121,9 +121,10 @@ class ComposedDaemon:
     entry).
 
     The ``_phase2_*`` fields are the OS-resource handles owned by the
-    buy orchestrator's collaborators (two SQLite connections + two
-    :class:`AsyncTinyFish` HTTP clients). They live on the dataclass
-    so :meth:`aclose` can close them on shutdown.
+    buy orchestrator's collaborators (two SQLite connections, two
+    :class:`AsyncTinyFish` HTTP clients, and the reconciler's
+    dispatching fetcher which owns the eBay refetch HTTP client). They
+    live on the dataclass so :meth:`aclose` can close them on shutdown.
     """
 
     daemon: Daemon
@@ -135,16 +136,37 @@ class ComposedDaemon:
     _phase2_state_reader: SqlitePhase2StateReader
     _phase2_wallapop_pay: WallapopPayFlow
     _phase2_ebay_checkout: EbayCheckoutFlow
+    _phase2_recon_fetcher: MarketplaceDispatchingPageFetcher
 
     async def aclose(self) -> None:
         """Close every adapter that owns OS resources. Idempotent —
-        the store already guards double-close internally."""
-        await self._phase2_wallapop_pay.close()
-        await self._phase2_ebay_checkout.close()
-        await self._phase2_audit_writer.close()
-        await self._phase2_state_reader.close()
-        await self.cache.close()
-        await self.store.close()
+        the store already guards double-close internally.
+
+        Each close is isolated: a failure in one still lets the rest
+        run, so a flaky adapter on shutdown can't leak the others'
+        connections. The first error (if any) is re-raised after every
+        handle has been given its chance to close, preserving the
+        shutdown-surfaces-errors contract.
+        """
+        closers = (
+            self._phase2_wallapop_pay.close,
+            self._phase2_ebay_checkout.close,
+            self._phase2_recon_fetcher.aclose,
+            self._phase2_audit_writer.close,
+            self._phase2_state_reader.close,
+            self.cache.close,
+            self.store.close,
+        )
+        log = get_logger("orchestration.composer")
+        errors: list[Exception] = []
+        for close in closers:
+            try:
+                await close()
+            except Exception as exc:  # keep closing the rest before re-raising
+                log.exception("composed_daemon_aclose_failed", extra={"closer": close.__qualname__})
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
 
 def compose_daemon(
@@ -277,6 +299,7 @@ def compose_daemon(
         _phase2_state_reader=phase2.state_reader,
         _phase2_wallapop_pay=phase2.wallapop_pay,
         _phase2_ebay_checkout=phase2.ebay_checkout,
+        _phase2_recon_fetcher=phase2.recon_fetcher,
     )
 
 
@@ -458,13 +481,16 @@ def _hours(n: int) -> timedelta:
 class _Phase2Bundle:
     """Output of :func:`_build_buy_orchestrator` — the orchestrator plus
     the OS-resource handles that :class:`ComposedDaemon` closes on
-    shutdown (two SQLite connections + two AsyncTinyFish clients)."""
+    shutdown (two SQLite connections, two AsyncTinyFish clients, and the
+    reconciler's dispatching fetcher which owns the eBay refetch HTTP
+    client)."""
 
     orchestrator: BuyOrchestrator
     audit_writer: Phase2AuditWriter
     state_reader: SqlitePhase2StateReader
     wallapop_pay: WallapopPayFlow
     ebay_checkout: EbayCheckoutFlow
+    recon_fetcher: MarketplaceDispatchingPageFetcher
 
 
 class _UnavailableMarketplaceFetcher(PageFetcher):
@@ -587,11 +613,12 @@ def _build_buy_orchestrator(
         if ebay_tokens_path is not None and ebay_quota is not None
         else _UnavailableMarketplaceFetcher("ebay")
     )
+    recon_fetcher = MarketplaceDispatchingPageFetcher(
+        wallapop=wallapop_recon_fetcher,
+        ebay=ebay_recon_fetcher,
+    )
     reconciler = Reconciler(
-        cross_source_fetcher=MarketplaceDispatchingPageFetcher(
-            wallapop=wallapop_recon_fetcher,
-            ebay=ebay_recon_fetcher,
-        ),
+        cross_source_fetcher=recon_fetcher,
         tolerance_eur=config.phase2.reconciliation_tolerance_eur,
         tolerance_pct=config.phase2.reconciliation_tolerance_pct,
     )
@@ -622,6 +649,7 @@ def _build_buy_orchestrator(
         state_reader=state_reader,
         wallapop_pay=wallapop_pay,
         ebay_checkout=ebay_checkout,
+        recon_fetcher=recon_fetcher,
     )
 
 
