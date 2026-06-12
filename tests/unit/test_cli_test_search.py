@@ -357,6 +357,33 @@ def test_comp_summary_line_ignores_non_reserved_in_stats() -> None:
     assert "median 155.00 EUR" in line
 
 
+def test_cli_footer_and_alert_line_agree_on_the_same_comps() -> None:
+    """The CLI footer and the Telegram alert line derive their numbers
+    from the same shared builder, so both must surface identical
+    count/min/median/max for one comp set (no drift)."""
+    from salvager.domain.alert import _comp_line
+    from salvager.domain.comps import summarize_comps
+
+    prices = [Decimal("80.00"), Decimal("230.00"), Decimal("130.00")]
+    results = [
+        _result("res-a", price=prices[0], is_reserved=True),
+        _result("res-b", price=prices[1], is_reserved=True),
+        _result("res-c", price=prices[2], is_reserved=True),
+    ]
+    summary = summarize_comps(prices)
+    assert summary is not None
+
+    footer = test_search_cmd._comp_summary_line(results)
+    alert = _comp_line(summary)
+    assert footer is not None
+
+    # min 80, median 130 (odd-count middle), max 230 — same in both surfaces.
+    assert "3 reserved listing(s)" in footer and "3 reservados" in alert
+    assert "min 80.00 EUR" in footer and "80,00 –" in alert  # noqa: RUF001
+    assert "median 130.00 EUR" in footer and "mediana 130,00 €" in alert
+    assert "max 230.00 EUR" in footer and "230,00 €" in alert
+
+
 def test_arbitrary_query_is_passed_verbatim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

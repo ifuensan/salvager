@@ -375,6 +375,12 @@ async def test_reserved_listings_skip_eval_record_seen_and_emit_comp_log(
     # Only the buyable triggered an alert (high-confidence default).
     assert summary.alerts_sent == 1
     assert len(telegram.sends) == 1
+    # PR #7 Layer 2: the buyable alert carries the in-cycle comp summary
+    # built from the two reserved prices (80,00 / 230,00 → median 155,00).
+    alert_text = telegram.sends[0].text
+    assert (
+        "💬 Comps \\(2 reservados\\): 80,00 – 230,00 € · mediana 155,00 €" in alert_text  # noqa: RUF001
+    )
 
     out = capsys.readouterr().out
     records = _records(out)
@@ -384,6 +390,27 @@ async def test_reserved_listings_skip_eval_record_seen_and_emit_comp_log(
     # Set comparison — log emission preserves insertion order but the
     # test only cares which prices got captured, not their order.
     assert set(comp_logs[0]["comp_prices_eur"]) == {"80.00", "230.00"}
+
+
+async def test_buyable_without_reserved_comps_omits_comp_line() -> None:
+    """With no reserved listing for the entry this cycle, the dispatched
+    alert carries NO comp row (the line is opt-in on present comps)."""
+    entry = _entry()
+    fetcher = _FakeFetcher(response=[_listing("buyable1")])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 1
+    assert summary.reserved_count == 0
+    assert len(telegram.sends) == 1
+    assert "💬 Comps" not in telegram.sends[0].text
 
 
 async def test_only_reserved_listings_skips_eval_and_no_alerts() -> None:

@@ -55,6 +55,7 @@ from salvager.domain.alert import (
     render_phase1_listing_alert,
     render_phase2_listing_alert,
 )
+from salvager.domain.comps import CompSummary, summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing, Marketplace, SearchQuery
 from salvager.domain.wishlist import Wishlist, WishlistEntry
@@ -191,6 +192,11 @@ async def run_poll_cycle(
         # they don't reprocess every cycle.
         buyable, reserved = _split_reserved(candidates)
         summary.reserved_count += len(reserved)
+        # In-cycle comp signal: the reserved prices observed for THIS entry
+        # this cycle. None when no reserved listing showed up — the renderer
+        # then omits the comp row. Entry-level, so every buyable alert for
+        # this entry shares the same summary.
+        comp_summary = summarize_comps(r.price_eur for r in reserved)
         if reserved:
             comp_prices = [r.price_eur for r in reserved]
             log.info(
@@ -223,6 +229,7 @@ async def run_poll_cycle(
                     telegram=telegram,
                     store=store,
                     phase2_preflight=phase2_preflight,
+                    comp_summary=comp_summary,
                     new_alert_id=new_alert_id,
                     clock=clock,
                     log=log,
@@ -441,6 +448,7 @@ async def _dispatch_alert(
     telegram: TelegramSurface,
     store: Store,
     phase2_preflight: Phase2Preflight | None,
+    comp_summary: CompSummary | None,
     new_alert_id: Callable[[], UUID],
     clock: Callable[[], datetime],
     log: object,
@@ -479,9 +487,9 @@ async def _dispatch_alert(
 
     try:
         rendered = (
-            render_phase2_listing_alert(snapshot, phase2_max_price_eur)
+            render_phase2_listing_alert(snapshot, phase2_max_price_eur, comp_summary=comp_summary)
             if phase == "phase2" and phase2_max_price_eur is not None
-            else render_phase1_listing_alert(snapshot)
+            else render_phase1_listing_alert(snapshot, comp_summary=comp_summary)
         )
         _message_id = await telegram.send(rendered)
     except Exception as exc:

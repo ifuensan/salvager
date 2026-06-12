@@ -26,6 +26,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from salvager.domain.comps import CompSummary
 from salvager.domain.errors import BuyFailureReason
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
@@ -184,8 +185,12 @@ def escape_markdown_v2(text: str) -> str:
     return _MD_V2_RE.sub(r"\\\1", text)
 
 
-def _format_price_es(amount: Decimal) -> str:
-    """Format a EUR Decimal in es-ES style — ``1.234,56 €``."""
+def _format_amount_es(amount: Decimal) -> str:
+    """Format a EUR Decimal in es-ES style WITHOUT the unit — ``1.234,56``.
+
+    Split out from :func:`_format_price_es` so the comp line can render a
+    ``min - max €`` range that shares a single trailing euro sign.
+    """
     quantized = amount.quantize(Decimal("0.01"))
     # Python's built-in locale module is process-global and unreliable
     # across environments; we hand-format to keep snapshot tests stable
@@ -202,7 +207,30 @@ def _format_price_es(amount: Decimal) -> str:
         integer_part = integer_part[:-3]
     chunks.append(integer_part)
     int_grouped = ".".join(reversed(chunks))
-    return f"{sign}{int_grouped},{decimal_part} €"
+    return f"{sign}{int_grouped},{decimal_part}"
+
+
+def _format_price_es(amount: Decimal) -> str:
+    """Format a EUR Decimal in es-ES style — ``1.234,56 €``."""
+    return f"{_format_amount_es(amount)} €"
+
+
+def _comp_line(summary: CompSummary) -> str:
+    """Render the reserved-comp summary row (PR #7 Layer 2).
+
+    Anatomy: ``💬 Comps (<n> reservados): <min> - <max> € · mediana <med> €``.
+    The min/max pair shares one trailing ``€`` per the locked format. The
+    whole line is plain prose (no intentional markup) so a single
+    :func:`escape_markdown_v2` pass over the assembled string is correct —
+    the parentheses and the price ``.``/``,`` would otherwise break the
+    MarkdownV2 markup.
+    """
+    low = _format_amount_es(summary.min_eur)
+    high = _format_price_es(summary.max_eur)
+    median = _format_price_es(summary.median_eur)
+    # EN DASH for the price range is the locked operator-facing format.
+    plain = f"💬 Comps ({summary.count} reservados): {low} – {high} · mediana {median}"  # noqa: RUF001
+    return escape_markdown_v2(plain)
 
 
 def _phase1_button_row(alert_id: str) -> list[InlineButton]:
@@ -222,7 +250,9 @@ def _phase1_button_row(alert_id: str) -> list[InlineButton]:
     ]
 
 
-def render_phase1_listing_alert(snapshot: AlertSnapshot) -> RenderedAlert:
+def render_phase1_listing_alert(
+    snapshot: AlertSnapshot, *, comp_summary: CompSummary | None = None
+) -> RenderedAlert:
     """Render a Phase 1 listing alert (Direction A + Direction E hybrid).
 
     Anatomy (direct listing):
@@ -230,6 +260,8 @@ def render_phase1_listing_alert(snapshot: AlertSnapshot) -> RenderedAlert:
       2. ``📍 <location> · <marketplace>``
       3. ``_<one_line_take>_``
       4. ``🔍 Confidence: <low|medium|high>``
+      5. (optional) ``💬 Comps (<n> reservados): <min> - <max> € · mediana <med> €``
+         — present only when ``comp_summary`` carries in-cycle reserved comps.
 
     When ``snapshot.evaluation.is_container == True``, two indented
     rows are inserted between row 2 and row 3:
@@ -267,6 +299,8 @@ def render_phase1_listing_alert(snapshot: AlertSnapshot) -> RenderedAlert:
 
     rows.append(f"_{take}_")
     rows.append(f"🔍 Confidence: {confidence}")
+    if comp_summary is not None:
+        rows.append(_comp_line(comp_summary))
 
     photo_url = listing.photo_urls[0] if listing.photo_urls else None
 
@@ -293,7 +327,10 @@ def _phase2_button_row(alert_id: str) -> list[InlineButton]:
 
 
 def render_phase2_listing_alert(
-    snapshot: AlertSnapshot, phase2_max_price_eur: Decimal
+    snapshot: AlertSnapshot,
+    phase2_max_price_eur: Decimal,
+    *,
+    comp_summary: CompSummary | None = None,
 ) -> RenderedAlert:
     """Render a Phase 2 listing alert (Story 5.2 / FR23 / FR24 / UX-DR7).
 
@@ -306,6 +343,10 @@ def render_phase2_listing_alert(
         per-entry ceiling the autonomous buy will honour (FR26).
       - Inline keyboard is ``[Comprar · Saltar · Ver]`` instead of the
         Phase 1 ``[Ver · Saltar · Posponer]`` row.
+
+    The optional ``comp_summary`` row renders identically to Phase 1 —
+    after the (Phase 2 max) Confidence row — when in-cycle reserved comps
+    exist; the Comprar keyboard is untouched.
 
     The container-aware Direction E split (Story 3.11) applies here too:
     a Phase 2 alert for a wrapper listing still gets the indented
@@ -336,6 +377,8 @@ def render_phase2_listing_alert(
 
     rows.append(f"_{take}_")
     rows.append(f"🔍 Confidence: {confidence} · Phase 2 max: {max_price}")
+    if comp_summary is not None:
+        rows.append(_comp_line(comp_summary))
 
     photo_url = listing.photo_urls[0] if listing.photo_urls else None
 
