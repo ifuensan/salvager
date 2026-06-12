@@ -9,7 +9,7 @@
 - [x] 2.1 In `domain/alert.py`, add a private `_comp_line(summary: CompSummary) -> str` that formats `💬 Comps (<n> reservados): <min> – <max> € · mediana <median> €` via `_format_price_es` + `escape_markdown_v2`.
 - [x] 2.2 Add an optional keyword-only `comp_summary: CompSummary | None = None` to `render_phase1_listing_alert`; append the comp line after the Confidence row when present.
 - [x] 2.3 Add the same optional `comp_summary` to `render_phase2_listing_alert`; append after the (Phase 2 max) Confidence row, leaving the Comprar keyboard untouched.
-- [x] 2.4 Update `test_alert_renderer.py` snapshot tests: keep all no-comp snapshots byte-identical, add comp-present cases for both phases (incl. single-comp and multi-comp).
+- [x] 2.4 Update the renderer snapshot tests (`test_alert_renderer_snapshots.py` + `test_phase2_renderer_snapshots.py`): keep all no-comp snapshots byte-identical, add comp-present cases for both phases (incl. single-comp and multi-comp).
 
 ## 3. Poll-cycle wiring
 

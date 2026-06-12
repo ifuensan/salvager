@@ -845,6 +845,45 @@ async def test_phase2_alert_dispatched_when_preflight_passes() -> None:
     ]
 
 
+async def test_phase2_alert_carries_comp_line_when_reserved_comps_present() -> None:
+    """The comp summary must reach the Phase 2 dispatch path too, not just
+    Phase 1 — `_dispatch_alert` forwards `comp_summary` to whichever renderer
+    the phase gate selects. Guards the Phase 2 forwarding branch."""
+    entry = _phase2_entry()
+    fetcher = _FakeFetcher(
+        response=[
+            _listing("buyable1", price=Decimal("55.00")),
+            _listing("res1", price=Decimal("80.00"), is_reserved=True),
+            _listing("res2", price=Decimal("230.00"), is_reserved=True),
+        ]
+    )
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+    preflight = Phase2Preflight(
+        state_reader=_StubStateReader(_healthy_state()),
+        circuit_breaker_threshold=3,
+        clock=_utc_t0,
+    )
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        phase2_preflight=preflight,
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 1
+    assert summary.reserved_count == 2
+    assert store.snapshots[0].phase == "phase2"
+    text = telegram.sends[0].text
+    # Phase 2 anatomy AND the comp line both present on the same alert.
+    assert "Phase 2 max:" in text
+    assert (
+        "💬 Comps \\(2 reservados\\): 80,00 – 230,00 € · mediana 155,00 €" in text  # noqa: RUF001
+    )
+
+
 async def test_phase2_downgrades_silently_when_preflight_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

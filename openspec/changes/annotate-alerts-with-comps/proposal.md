@@ -29,5 +29,5 @@ PR #7 routes reserved Wallapop listings out of the buy path but keeps their pric
   - `domain/alert.py`: `render_phase1_listing_alert` and `render_phase2_listing_alert` take an optional `comp_summary` and append the formatted line after the Confidence row.
   - `orchestration/poll_loop.py`: build the `CompSummary` from the existing `reserved` split and pass it through `_dispatch_alert`.
   - `cli/commands/test_search_cmd.py`: `_comp_summary_line` re-implemented on top of the shared builder (behaviour preserved).
-- **Tests:** renderer snapshot tests (`test_alert_renderer.py`) updated for the new line; new unit tests for the `CompSummary` builder (incl. even-length median, single comp, empty); poll_loop test asserting the comp line reaches the rendered alert when reserved comps coexist with a buyable listing in one cycle.
+- **Tests:** renderer snapshot tests (`test_alert_renderer_snapshots.py` + `test_phase2_renderer_snapshots.py`) updated for the new line; new unit tests for the `CompSummary` builder (incl. even-length median, single comp, empty); poll_loop test asserting the comp line reaches the rendered alert when reserved comps coexist with a buyable listing in one cycle.
 - **No change** to: DB schema/migrations, `AlertSnapshot`, callback flow, LLM prompt / `FORBIDDEN_PROMPT_TERMS`, eBay/Wallapop adapters.

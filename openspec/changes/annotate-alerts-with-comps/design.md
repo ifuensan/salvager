@@ -2,7 +2,7 @@
 
 PR #7 partitions reserved Wallapop listings out of the buy path inside `run_poll_cycle` (`_split_reserved` → `buyable, reserved`). The reserved set is already in scope at dispatch time: the cycle logs `reserved_comps_observed` with the comp prices and records them as seen, but the prices never reach the operator's alert. The only place that turns reserved prices into a count/min/median/max summary is `cli/commands/test_search_cmd.py::_comp_summary_line`, which carries the even-length-median fix Devin flagged on PR #7.
 
-The alert renderers (`domain/alert.py`) are pure functions producing `RenderedAlert`. Phase 2 already demonstrates the extension pattern this change follows: `render_phase2_listing_alert` takes `phase2_max_price_eur` as a render-time argument that is NOT stored on `AlertSnapshot`. The alert output is locked at v1 (FR22) and guarded by snapshot tests in `test_alert_renderer.py`.
+The alert renderers (`domain/alert.py`) are pure functions producing `RenderedAlert`. Phase 2 already demonstrates the extension pattern this change follows: `render_phase2_listing_alert` takes `phase2_max_price_eur` as a render-time argument that is NOT stored on `AlertSnapshot`. The alert output is locked at v1 (FR22) and guarded by snapshot tests in `test_alert_renderer_snapshots.py` (Phase 1) and `test_phase2_renderer_snapshots.py` (Phase 2).
 
 ## Goals / Non-Goals
 
@@ -37,6 +37,6 @@ With one comp, min=median=max. The format still reads `Comps (1 reservados)` whi
 ## Risks / Trade-offs
 
 - **In-cycle comps are sparse** → A reserved listing and a buyable one rarely surface for the same entry in the same cycle, so the line will often be absent. Mitigation: this is the accepted Layer-2 scope; cross-cycle persistence (which would make comps common) is a deliberately separate future item. The CLI `test-search` path still shows comps on demand.
-- **Locked v1 output (FR22) changes** → snapshot tests will fail until updated. Mitigation: update `test_alert_renderer.py` snapshots as part of the change; the new line only ever appears when comps exist, so all existing no-comp snapshots stay byte-identical and only new comp-present cases are added.
+- **Locked v1 output (FR22) changes** → snapshot tests will fail until updated. Mitigation: update the `test_alert_renderer_snapshots.py` / `test_phase2_renderer_snapshots.py` snapshots as part of the change; the new line only ever appears when comps exist, so all existing no-comp snapshots stay byte-identical and only new comp-present cases are added.
 - **Median type drift** → averaging two `Decimal` central values can yield a half-cent (e.g. `(200 + 201)/2 = 200.5`); `_format_price_es` quantizes to 2dp so it renders cleanly. Mitigation: covered by an even-length builder unit test.
 - **Reserved set only exists for Wallapop today** → eBay listings don't carry a reserved flag, so eBay alerts won't show comps. Acceptable; no special handling needed.
