@@ -23,6 +23,7 @@ from salvager.domain.alert import (
     AlertSnapshot,
     render_phase2_listing_alert,
 )
+from salvager.domain.comps import summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 
@@ -110,6 +111,20 @@ def test_snapshot_missing_photo(snapshot: SnapshotAssertion) -> None:
     rendered = render_phase2_listing_alert(_snapshot(listing=_listing(photo_urls=[])), _PHASE2_MAX)
     assert rendered.text == snapshot
     assert rendered.photo_url is None
+
+
+def test_snapshot_with_comps(snapshot: SnapshotAssertion) -> None:
+    """The comp row renders after the Phase 2 ``Confidence … Phase 2 max``
+    row and leaves the Comprar keyboard untouched (PR #7 Layer 2)."""
+    comp_summary = summarize_comps([Decimal("180.00"), Decimal("200.00"), Decimal("240.00")])
+    rendered = render_phase2_listing_alert(_snapshot(), _PHASE2_MAX, comp_summary=comp_summary)
+    assert rendered.text == snapshot
+    assert "💬 Comps" in rendered.text
+    # The comp row sits below the Phase 2 max confidence row.
+    assert rendered.text.index("Phase 2 max:") < rendered.text.index("💬 Comps")
+    # Keyboard unchanged.
+    assert rendered.inline_keyboard is not None
+    assert [b.text for b in rendered.inline_keyboard[0]] == ["✅ Comprar", "❌ Saltar", "👁 Ver"]
 
 
 # ─────────────────────────────────────────────────────────────────────────

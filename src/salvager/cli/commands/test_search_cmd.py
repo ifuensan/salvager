@@ -32,6 +32,7 @@ from salvager.adapters.llm_cache_sqlite.cache import (
 from salvager.adapters.wallapop_api.fetcher import WallapopApiFetcher
 from salvager.config.config_yaml import ConfigModel
 from salvager.config.env import EnvSettings
+from salvager.domain.comps import summarize_comps
 from salvager.domain.errors import LlmRateLimited, MarketplaceError, TinyFishRateLimited
 from salvager.domain.listing import Listing, Marketplace, SearchQuery
 from salvager.domain.prompts import PROMPT_VERSION
@@ -394,23 +395,17 @@ def _comp_summary_line(results: list[_SearchResult]) -> str | None:
     eyeball whether a buyable listing's price is reasonable without
     having to scan the table by hand.
     """
-    comp_prices = sorted(r.listing.price_eur for r in results if r.listing.is_reserved)
-    if not comp_prices:
+    # The count / min / median / max math (incl. the even-length-median
+    # fix Devin caught on PR #7) lives in the shared domain builder so this
+    # footer and the Telegram alert comp line cannot drift.
+    summary = summarize_comps(r.listing.price_eur for r in results if r.listing.is_reserved)
+    if summary is None:
         return None
-    # For an even-length list the "median" is the average of the two
-    # central values, not the upper-middle pick — using the index alone
-    # would print a "median" that equals the max for a 2-element list
-    # (caught by Devin on PR #7).
-    mid = len(comp_prices) // 2
-    if len(comp_prices) % 2:
-        median = comp_prices[mid]
-    else:
-        median = (comp_prices[mid - 1] + comp_prices[mid]) / 2
     return (
-        f"{len(comp_prices)} reserved listing(s) used as comps: "
-        f"min {_format_price(comp_prices[0])}, "
-        f"median {_format_price(median)}, "
-        f"max {_format_price(comp_prices[-1])}"
+        f"{summary.count} reserved listing(s) used as comps: "
+        f"min {_format_price(summary.min_eur)}, "
+        f"median {_format_price(summary.median_eur)}, "
+        f"max {_format_price(summary.max_eur)}"
     )
 
 

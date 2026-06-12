@@ -29,6 +29,7 @@ from salvager.domain.alert import (
     AlertSnapshot,
     render_phase1_listing_alert,
 )
+from salvager.domain.comps import summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 
@@ -133,6 +134,22 @@ def test_snapshot_long_llm_take(snapshot: SnapshotAssertion) -> None:
     rendered = render_phase1_listing_alert(
         _snapshot(evaluation=_evaluation(one_line_take=long_take))
     )
+    assert rendered.text == snapshot
+
+
+def test_snapshot_with_comps(snapshot: SnapshotAssertion) -> None:
+    """A buyable alert with several in-cycle reserved comps grows a
+    ``💬 Comps`` row after the Confidence row (PR #7 Layer 2)."""
+    comp_summary = summarize_comps([Decimal("180.00"), Decimal("200.00"), Decimal("240.00")])
+    rendered = render_phase1_listing_alert(_snapshot(), comp_summary=comp_summary)
+    assert rendered.text == snapshot
+    assert "💬 Comps" in rendered.text
+
+
+def test_snapshot_with_single_comp(snapshot: SnapshotAssertion) -> None:
+    """A single comp collapses min=median=max; the row still renders."""
+    comp_summary = summarize_comps([Decimal("200.00")])
+    rendered = render_phase1_listing_alert(_snapshot(), comp_summary=comp_summary)
     assert rendered.text == snapshot
 
 
