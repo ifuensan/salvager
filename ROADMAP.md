@@ -26,13 +26,13 @@ The v0.2.x line ships all Phase 1 + Phase 2 code. v1.0.0 is gated on production 
 
 **Promotion criteria** (informal; tightened if reality requires it):
 
-1. ≥ 2 weeks of the v0.2.x stable image (`:0.2.3` recommended) running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
+1. ≥ 2 weeks of the current stable image (`:0.3.0` recommended) running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
 2. ≥ 1 Phase 2 purchase completed end-to-end (or one verified Phase 2 abort with the safety stack engaging as designed). Counts as "the autonomous-buy path got exercised against the real world, not just synthetic tests".
 3. No critical rendering regression surfaced between v0.2.x and the v1.0.0 candidate (re-audit if `domain/alert.py` or the styling layer changes).
 4. **OQ3** — measured per-purchase TinyFish Browser cost (NFR-C2 cap is ≤ €1.00). v0.2.x is when this number first appears empirically; v1.0.0 confirms it.
 5. **OQ6** — language-register bias check on the first batch of real Telegram alerts. Castilian is the supported locale; Catalan / regional Spanish / Basque listings get best-effort treatment with a README disclosure at v1.
 
-The release-gate audit (Story 5.17) was performed against the v0.2.0 candidate and recorded `RESULT: PASS` in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md). The audit applies to the v0.2.x patch releases and to v1.0.0 too as long as no rendering / accessibility change lands between releases (v0.2.1–v0.2.2 are Docker-only patches; v0.2.3 changes the Wallapop adapter and the `salvager test-search` CLI table but leaves `domain/alert.py` + the Telegram alert renderer untouched).
+The release-gate audit (Story 5.17) was performed against the v0.2.0 candidate and recorded `RESULT: PASS` in [`docs/release-audits/v1.0/SUMMARY.md`](docs/release-audits/v1.0/SUMMARY.md). The audit applied unchanged through v0.2.3 (v0.2.1–v0.2.2 are Docker-only patches; v0.2.3 changes the Wallapop adapter and the `salvager test-search` CLI table but left `domain/alert.py` + the Telegram alert renderer untouched). **v0.3.0 breaks that invariant**: it adds the in-cycle reserved-comp line to `domain/alert.py` and both listing renderers, so per promotion criterion 3 the Story 5.17 rendering / accessibility audit MUST be re-confirmed against the v1.0.0 candidate before promotion. The change is additive (a single row that only appears when reserved comps exist) and all pre-existing renderer snapshots stayed byte-identical, so the re-audit scope is narrow.
 
 **Phase 2 release-gate criteria already met by v0.2.0** (re-stated for completeness):
 

@@ -12,6 +12,76 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.3.0] — 2026-06-12
+
+First release of the burn-in window. The headline is that the **Phase 2
+autonomous-purchase loop is now wired end-to-end and live** behind the
+safety stack and the non-bypassable Telegram tap, plus a round of
+observability and reliability work surfaced by letting the daemon soak.
+Phase 2 stays opt-in per wishlist entry (`phase2.enabled`); a Comprar
+tap on a non-opted-in entry is impossible because the button is never
+rendered.
+
+**Phase 2 — autonomous purchase wired end-to-end**
+
+- `BuyOrchestrator` is now composed at startup with all nine of its
+  collaborators (preflight, reconciler, browser, circuit breaker, audit
+  writer, Telegram surface, store, reporter, wishlist loader); a Comprar
+  tap drives a real, operator-confirmed buy instead of a logged no-op.
+- A marketplace-dispatching browser/page-fetcher routes each listing to
+  the right checkout flow by **parsed hostname** (Wallapop Pay vs eBay
+  checkout), not a URL substring.
+- The reconciler's eBay re-fetch client is now shared and closed on
+  shutdown, and `ComposedDaemon.aclose` isolates each closer so one
+  failing close can't leak the rest (#19).
+
+**Telegram callback loop + alerts**
+
+- The daemon now runs the Telegram callback listener concurrently with
+  the poll loop, so view / skip / snooze / buy taps are handled live
+  (#8), and logs `callback_handled` on the happy path (#10).
+- Buyable Phase 1 / Phase 2 listing alerts now carry an in-cycle
+  reserved-comp summary line after the Confidence row —
+  `💬 Comps (N reservados): <min> – <max> € · mediana <med> €` — built
+  from the reserved listings observed for the same entry that cycle, so
+  the operator can judge the asking price in-context. Closes Layer 2 of
+  the reserved-listing work; cross-cycle comp persistence stays a later
+  item (#22).
+
+**Observability & operability**
+
+- Opt-in pretty (human-readable, coloured) log format via
+  `logging.format: pretty`; JSON stays the default (NFR-O1). The OpenSpec
+  spec-driven workflow was bootstrapped in the repo (#15).
+- The listener task is supervised and shutdown drains in-flight tasks
+  before `aclose`, so a listener crash surfaces loudly instead of
+  wedging shutdown (#9).
+
+**Matching & reliability**
+
+- Each wishlist entry's keyword list now fans out to N marketplace
+  searches per cycle, unioned and de-duped by `listing_id`, widening
+  coverage without duplicate alerts (#11).
+- The LLM cache serialises concurrent `get()` against its shared SQLite
+  connection, fixing an `InterfaceError` race observed under the
+  poll loop's evaluation fan-out (#18).
+
+**Wishlist**
+
+- The HC530 SAS variant is documented as a wishlist example so the
+  SAS-vs-SATA distinction is captured alongside the SATA entry (#17).
+
+**Internal / CI**
+
+- GitHub Actions pinned to full commit SHA + Dependabot configured
+  (#12), Actions group bumped (#13), Sonar hygiene (`logger.exception`
+  in except blocks, extracted duplicated prose constants, guarded test
+  list accesses, `tmp_path` over `/tmp`) (#14, #16), and the
+  `annotate-alerts-with-comps` OpenSpec change archived with its spec
+  promoted to `openspec/specs/listing-alert-comps/` (#23).
+
+---
+
 ## [0.2.3] — 2026-05-20
 
 Wallapop adapter stabilisation. The v0.2.0–0.2.2 line shipped before
