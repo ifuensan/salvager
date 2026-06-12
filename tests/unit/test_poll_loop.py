@@ -875,6 +875,8 @@ async def test_phase2_alert_carries_comp_line_when_reserved_comps_present() -> N
 
     assert summary.alerts_sent == 1
     assert summary.reserved_count == 2
+    assert len(store.snapshots) == 1
+    assert len(telegram.sends) == 1
     assert store.snapshots[0].phase == "phase2"
     text = telegram.sends[0].text
     # Phase 2 anatomy AND the comp line both present on the same alert.
