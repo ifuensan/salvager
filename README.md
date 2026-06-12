@@ -136,6 +136,43 @@ journalctl -u salvager -f --output=cat | jq .
 
 ---
 
+## Phase 2: operator-confirmed buy
+
+Phase 2 lets the daemon actually purchase a listing — via TinyFish-driven Wallapop Pay or eBay.es checkout — but **only when the operator taps the "✅ Comprar" button on a Telegram alert**. There is no auto-buy mode anywhere in the codebase. The daemon polls, evaluates, and alerts; the operator decides whether to pull the trigger.
+
+### Enabling Phase 2 for a wishlist entry
+
+By default every entry has `phase2.enabled: false` and only the Phase 1 buttons (View / Skip / Snooze) appear on its alerts. To enable Phase 2 for a specific entry:
+
+```bash
+uv run salvager phase2 enable <entry-ref>
+```
+
+Once enabled, alerts for that entry render with an extra "✅ Comprar" button. The per-entry `phase2.max_price_eur` ceiling is the operator's stated max — the orchestrator's preflight + reconciler refuse to buy above it even if the live price has drifted from the snapshot.
+
+### What a Comprar tap actually does
+
+When you tap "✅ Comprar" on an open alert, the daemon runs this pipeline in the background:
+
+1. **Snapshot lookup** — locate the alert's frozen `(entry, listing, evaluation)` snapshot in the local store.
+2. **Preflight gate** — confirm the entry is still enabled, the circuit breaker is closed, and Phase 2 is not globally killed (`config.phase2.kill_switch_global`).
+3. **Reconciliation** — re-fetch the listing on the marketplace and verify the displayed price still matches the snapshot within tolerance (`config.phase2.reconciliation_tolerance_eur` / `_pct`).
+4. **Checkout** — drive the per-marketplace browser flow via TinyFish (Wallapop Pay or eBay.es checkout); abort if the on-page price exceeds the entry's `max_price_eur`.
+5. **Audit** — write an append-only row to the Phase 2 audit log capturing inputs, outcome, and timestamps.
+6. **Report** — send a Telegram follow-up summarising the outcome (success with receipt id + price paid, failure with reason, or aborted with reason).
+
+If `N` consecutive buys fail (default `N = config.phase2.circuit_breaker_threshold = 3`), the circuit breaker opens and further taps are rejected at preflight until the operator clears the failure state (`salvager phase2 reset` — see `phase2 --help`).
+
+### Inspecting the audit log
+
+```bash
+uv run salvager audit show --type phase2
+```
+
+Every Comprar tap that reached the orchestrator appears here — including the aborted ones — with the reason, prices, and receipt id where applicable.
+
+---
+
 ## Planning artifacts
 
 The BMAD planning artifacts that drove the design and implementation plan live in [`_bmad-output/planning-artifacts/`](_bmad-output/planning-artifacts):

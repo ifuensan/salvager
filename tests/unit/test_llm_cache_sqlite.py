@@ -7,9 +7,11 @@ behaviour is tested deterministically without sleep.
 
 from __future__ import annotations
 
+from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -551,7 +553,7 @@ async def test_concurrent_get_and_set_do_not_race(tmp_path: Path) -> None:
         async def reader(url: str) -> object:
             return await cache.get(url, "v1")
 
-        coros = []
+        coros: list[Coroutine[Any, Any, Any]] = []
         for url in urls:
             coros.append(writer(url))
             coros.append(reader(url))
