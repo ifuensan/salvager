@@ -291,7 +291,7 @@ def render_phase1_listing_alert(
          — present only when ``comp_summary`` carries in-cycle reserved comps.
 
     When ``snapshot.evaluation.is_container == True``, two indented
-    rows are inserted between row 2 and row 3:
+    rows are inserted between the deep-link row and the take row:
       - ``  ↪︎ Wrapper: <wrapper_text>``
       - ``  ↪︎ Extracted: <extracted_text>``
 
