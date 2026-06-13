@@ -233,6 +233,31 @@ def _comp_line(summary: CompSummary) -> str:
     return escape_markdown_v2(plain)
 
 
+def _md_v2_link(text: str, url: str) -> str:
+    """Assemble a MarkdownV2 inline link ``[text](url)``.
+
+    The visible ``text`` is escaped with the standard body escaper. The
+    link *target* follows different rules: inside ``(...)`` MarkdownV2
+    only treats ``\\`` and ``)`` as special, while ``.``/``-``/``!`` etc.
+    (escaped in body text) must NOT be escaped or the URL breaks. So the
+    target escapes exactly those two characters and leaves ``?``/``=``/
+    ``&``/``#``/``|`` intact so the link still resolves.
+    """
+    escaped_target = url.replace("\\", "\\\\").replace(")", "\\)")
+    return f"[{escape_markdown_v2(text)}]({escaped_target})"
+
+
+def _deeplink_row(listing: Listing) -> str:
+    """Render the clickable deep-link row (FR18).
+
+    ``🔗 Ver anuncio en <Marketplace>`` linking to ``listing.url``; the
+    marketplace label reuses the same ``capitalize()`` form shown on the
+    location row. Present on every listing alert — the URL is required.
+    """
+    marketplace = listing.marketplace.capitalize()
+    return "🔗 " + _md_v2_link(f"Ver anuncio en {marketplace}", listing.url)
+
+
 def _phase1_button_row(alert_id: str) -> list[InlineButton]:
     """The Phase 1 button row: Ver · Saltar · Posponer 24h (UX-DR4).
 
@@ -258,9 +283,11 @@ def render_phase1_listing_alert(
     Anatomy (direct listing):
       1. ``{📦} *<entry_display_name>* — *<price>*``
       2. ``📍 <location> · <marketplace>``
-      3. ``_<one_line_take>_``
-      4. ``🔍 Confidence: <low|medium|high>``
-      5. (optional) ``💬 Comps (<n> reservados): <min> - <max> € · mediana <med> €``
+      3. ``🔗 Ver anuncio en <Marketplace>`` — clickable deep link to the
+         listing URL (FR18); present on every listing alert.
+      4. ``_<one_line_take>_``
+      5. ``🔍 Confidence: <low|medium|high>``
+      6. (optional) ``💬 Comps (<n> reservados): <min> - <max> € · mediana <med> €``
          — present only when ``comp_summary`` carries in-cycle reserved comps.
 
     When ``snapshot.evaluation.is_container == True``, two indented
@@ -290,6 +317,7 @@ def render_phase1_listing_alert(
         f"{severity} *{name}* — *{price}*",
         f"📍 {location} · {marketplace}",
     ]
+    rows.append(_deeplink_row(listing))
 
     if evaluation.is_container:
         wrapper = escape_markdown_v2(evaluation.wrapper_text or "—")
@@ -368,6 +396,7 @@ def render_phase2_listing_alert(
         f"{severity} *{name}* — *{price}*",
         f"📍 {location} · {marketplace}",
     ]
+    rows.append(_deeplink_row(listing))
 
     if evaluation.is_container:
         wrapper = escape_markdown_v2(evaluation.wrapper_text or "—")

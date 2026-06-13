@@ -148,12 +148,13 @@ def _snapshot(**overrides: object) -> AlertSnapshot:
 def test_direct_listing_alert_has_locked_row_anatomy() -> None:
     rendered = render_phase1_listing_alert(_snapshot())
     lines = rendered.text.split("\n")
-    assert len(lines) == 4  # rows 1-4 per Direction A
+    assert len(lines) == 5  # rows 1-5: + deep-link row (FR18)
     assert lines[0].startswith("📦 ")
     assert "*" in lines[0]  # bold name + price
     assert lines[1].startswith("📍 ")
-    assert lines[2].startswith("_") and lines[2].endswith("_")
-    assert lines[3].startswith("🔍 Confidence: ")
+    assert lines[2].startswith("🔗 ")  # clickable deep link to the listing
+    assert lines[3].startswith("_") and lines[3].endswith("_")
+    assert lines[4].startswith("🔍 Confidence: ")
 
 
 def test_rendered_alert_parse_mode_is_markdown_v2() -> None:
@@ -199,10 +200,11 @@ def test_container_alert_inserts_two_indented_rows() -> None:
     )
     rendered = render_phase1_listing_alert(_snapshot(evaluation=container_eval))
     lines = rendered.text.split("\n")
-    assert len(lines) == 6  # 4 base + 2 inserted
-    # Indented rows go between row 2 (location) and the take row.
-    assert lines[2].startswith("  ↪︎ Wrapper: ")
-    assert lines[3].startswith("  ↪︎ Extracted: ")
+    assert len(lines) == 7  # 5 base (incl. deep link) + 2 inserted
+    # Indented rows go between the deep-link row and the take row.
+    assert lines[2].startswith("🔗 ")
+    assert lines[3].startswith("  ↪︎ Wrapper: ")
+    assert lines[4].startswith("  ↪︎ Extracted: ")
 
 
 def test_container_alert_handles_missing_wrapper_text() -> None:
