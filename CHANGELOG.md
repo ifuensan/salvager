@@ -12,6 +12,24 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.3.1] — 2026-06-13
+
+Surfaced during the v0.3.0 burn-in: the operator had no way to click
+through from a Telegram alert to the actual listing to validate it.
+
+**Clickable deep link on listing alerts (closes FR18)**
+
+- Every Phase 1 and Phase 2 listing alert now carries a
+  `🔗 Ver anuncio en <Marketplace>` row — a MarkdownV2 inline link to
+  `listing.url` — rendered immediately after the `📍` location row. FR18
+  always required this "deep link to the listing"; it had never been
+  implemented (the `👁 Ver` button only records a "visto" audit row and
+  does not surface the URL). The Ver button, its callback, the keyboard,
+  and the persisted snapshot are unchanged. The link target escapes only
+  `\` and `)` so query strings (`?a=1&b=2`) keep working (#25).
+
+---
+
 ## [0.3.0] — 2026-06-12
 
 First release of the burn-in window. The headline is that the **Phase 2
