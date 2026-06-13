@@ -113,6 +113,17 @@ def test_snapshot_missing_photo(snapshot: SnapshotAssertion) -> None:
     assert rendered.photo_url is None
 
 
+def test_deeplink_row_present_on_phase2() -> None:
+    """FR18: the Phase 2 alert carries the same deep-link row after the
+    location row, with the Comprar keyboard untouched."""
+    rendered = render_phase2_listing_alert(_snapshot(), _PHASE2_MAX)
+    lines = rendered.text.split("\n")
+    assert lines[1].startswith("📍 ")
+    assert lines[2] == "🔗 [Ver anuncio en Wallapop](https://wallapop.com/item/abc123)"
+    assert rendered.inline_keyboard is not None
+    assert [b.text for b in rendered.inline_keyboard[0]] == ["✅ Comprar", "❌ Saltar", "👁 Ver"]
+
+
 def test_snapshot_with_comps(snapshot: SnapshotAssertion) -> None:
     """The comp row renders after the Phase 2 ``Confidence … Phase 2 max``
     row and leaves the Comprar keyboard untouched (PR #7 Layer 2)."""

@@ -153,6 +153,27 @@ def test_snapshot_with_single_comp(snapshot: SnapshotAssertion) -> None:
     assert rendered.text == snapshot
 
 
+def test_deeplink_row_present_with_url_and_marketplace() -> None:
+    """FR18: every Phase 1 alert carries a clickable deep link to the
+    listing URL, right after the location row."""
+    rendered = render_phase1_listing_alert(_snapshot())
+    lines = rendered.text.split("\n")
+    # Row 3 (index 2) is the deep link, just after the 📍 location row.
+    assert lines[1].startswith("📍 ")
+    assert lines[2] == "🔗 [Ver anuncio en Wallapop](https://wallapop.com/item/abc123)"
+
+
+def test_deeplink_url_escapes_only_paren_and_backslash() -> None:
+    """A URL with a ``)`` is ``\\)``-escaped; query chars stay intact so
+    the link still resolves."""
+    rendered = render_phase1_listing_alert(
+        _snapshot(listing=_listing(url="https://ebay.es/itm/1?hash=item(abc)&x=1"))
+    )
+    assert (
+        "🔗 [Ver anuncio en Wallapop](https://ebay.es/itm/1?hash=item(abc\\)&x=1)" in rendered.text
+    )
+
+
 def test_snapshot_special_chars_in_title(snapshot: SnapshotAssertion) -> None:
     """Every MarkdownV2-reserved char appearing in a real user-supplied
     title must be escaped — otherwise a stray ``*`` or ``[`` would either
