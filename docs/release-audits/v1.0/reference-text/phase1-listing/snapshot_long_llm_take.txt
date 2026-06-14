@@ -1,4 +1,5 @@
 📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
 📍 Madrid · Wallapop
+🔗 [Ver anuncio en Wallapop](https://wallapop.com/item/abc123)
 _Coincide con el modelo del wishlist \(WD Red Plus 4TB, ref WD40EFPX\) y el precio está claramente por debajo de mercado; descripción menciona uso intensivo en NAS — riesgo de SMART degradado, pero el precio compensa para un homelab\._
 🔍 Confidence: high
