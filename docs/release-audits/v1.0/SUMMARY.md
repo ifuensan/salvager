@@ -22,6 +22,43 @@ Procedure: [`docs/release-checklist.md`](../../release-checklist.md). Test-chat
 setup: [`SETUP.md`](SETUP.md). Reference MarkdownV2 text per variant:
 [`reference-text/`](reference-text/).
 
+---
+
+## Re-audit delta — v0.3.1 (2026-06-14)
+
+The original `RESULT: PASS` above was captured on `85252bc` and applies
+**only as long as `domain/alert.py` is unchanged**. Two listing-renderer
+changes have since landed, so the **listing surface must be re-captured**
+against the v0.3.1 candidate before v1.0 promotion (ROADMAP criterion 3):
+
+- **v0.3.0** — added the in-cycle reserved-comp row
+  `💬 Comps (<n> reservados): <min> – <max> € · mediana <med> €`
+  (rendered only when reserved comps exist).
+- **v0.3.1** — added the unconditional deep-link row
+  `🔗 Ver anuncio en <Marketplace>` (MarkdownV2 inline link to the
+  listing URL), on every Phase 1 / Phase 2 listing alert.
+
+**Re-audit scope is narrow — listing surface only.** The Phase-2-buy
+renderer (receipt + 8 failure variants) and the 22 operational-event
+variants are **untouched**; their 2026-05-16 PASS carries forward
+unchanged. Within the listing surface:
+
+- `reference-text/phase1-listing/` and `reference-text/phase2-listing/`
+  were **regenerated to v0.3.1** in this commit (every variant gained the
+  `🔗` row), and two new comp variants were added:
+  `snapshot_with_comps` and `snapshot_with_single_comp` (phase1),
+  `snapshot_with_comps` (phase2).
+- **Pending (operator, needs devices):** re-capture the §1 listing-surface
+  cells (Android + Telegram Desktop) at v0.3.1, and re-run the §2
+  color-blind + §3 VoiceOver checks for the two new rows — verifying the
+  deep link renders as a single tappable line (no wrap, URL not shown as
+  raw text) and the comp `–`/`·`/`€` glyphs survive. New §1 invariant to
+  add: **deep link opens the correct listing**.
+
+Until those cells are re-captured the listing-surface §1/§2/§3 verdicts
+are **PENDING at v0.3.1** (the tables below still reflect the 2026-05-16
+run on the pre-deep-link renderer).
+
 Mark each cell **`✓`** (clean), **`!`** (anomaly — drop a note + a PNG
 into the per-section folder), or leave **blank** if not yet captured.
 Critical anomalies (per the blocking-criteria section of the
