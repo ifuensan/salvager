@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+import salvager
 from salvager.adapters.sqlite_store import (
     MigrationRunner,
     Phase2AuditWriter,
@@ -44,8 +45,10 @@ _T0 = datetime(2026, 5, 15, 6, 0, 0, tzinfo=UTC)
 _TOL_EUR = Decimal("1.00")
 _TOL_PCT = Decimal("5")
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SHIPPED_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "price_parsers" / "active"
+# Smoke fixtures ship as package data under src/salvager/smoke_fixtures/.
+SHIPPED_FIXTURES = (
+    Path(salvager.__file__).resolve().parent / "smoke_fixtures" / "price_parsers" / "active"
+)
 
 _REQUIRED_FIXTURES = (
     "wallapop_api_typical",

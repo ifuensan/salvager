@@ -13,10 +13,28 @@ from pathlib import Path
 
 import pytest
 
+import salvager
 from salvager.orchestration.phase2_parsers import default_price_parser_registry
 from salvager.orchestration.smoke_test import discover_fixtures
 
-SHIPPED_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "price_parsers" / "active"
+# Smoke fixtures ship as package data under src/salvager/smoke_fixtures/.
+SHIPPED_FIXTURES = (
+    Path(salvager.__file__).resolve().parent / "smoke_fixtures" / "price_parsers" / "active"
+)
+
+
+def test_shipped_fixtures_ship_with_the_package() -> None:
+    """Guard: the smoke fixtures must resolve from the installed package
+    (not a cwd-relative tests/ path) so they ship in the Docker image /
+    wheel. If they ever stop shipping, CI fails here instead of the daemon
+    silently leaving Phase 2 un-armable in production."""
+    # The CLI default must point INSIDE the salvager package.
+    from salvager.cli.app import _DEFAULT_FIXTURES_DIR
+
+    pkg_root = Path(salvager.__file__).resolve().parent
+    assert pkg_root in _DEFAULT_FIXTURES_DIR.resolve().parents
+    assert _DEFAULT_FIXTURES_DIR.is_dir()
+    assert discover_fixtures(_DEFAULT_FIXTURES_DIR), "no smoke fixtures shipped with the package"
 
 
 def test_default_registry_covers_every_shipped_fixture_kind() -> None:

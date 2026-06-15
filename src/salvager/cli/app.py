@@ -754,7 +754,16 @@ def cmd_phase2_disable(
         raise typer.Exit(code=exit_code)
 
 
-_DEFAULT_FIXTURES_DIR = Path("tests/fixtures/price_parsers/active")
+# Smoke-test fixtures ship as package data under src/salvager/smoke_fixtures/
+# so the default resolves relative to the installed package (works from the
+# /app/src runtime image and from a built wheel), NOT relative to cwd. Mirrors
+# ``orchestration.smoke_test.DEFAULT_SMOKE_FIXTURES_DIR`` — recomputed here as a
+# one-liner to keep smoke_test (and its heavy deps) out of the CLI import path,
+# since typer evaluates this default at decoration time. __file__ is
+# src/salvager/cli/app.py → parents[1] is the salvager package root.
+_DEFAULT_FIXTURES_DIR = (
+    Path(__file__).resolve().parents[1] / "smoke_fixtures" / "price_parsers" / "active"
+)
 
 
 @phase2_app.command("smoke-test")

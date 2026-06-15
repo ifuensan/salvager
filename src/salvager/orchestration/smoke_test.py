@@ -58,6 +58,17 @@ from salvager.orchestration.degradation_reporter import Reporter
 #: test trips the global lockout.
 SMOKE_TEST_FAILED_REASON: Final[str] = "smoke_test_failed"
 
+#: Canonical smoke-test fixtures, shipped as package data under
+#: ``src/salvager/smoke_fixtures/`` so they travel with the runtime image
+#: (``COPY src/``) and a built wheel — resolved relative to the package, NOT
+#: the current working directory. ``__file__`` is
+#: ``src/salvager/orchestration/smoke_test.py`` → ``parents[1]`` is the
+#: ``salvager`` package root. Single source of truth for the CLI default and
+#: the daemon-scheduled smoke job.
+DEFAULT_SMOKE_FIXTURES_DIR: Final[Path] = (
+    Path(__file__).resolve().parents[1] / "smoke_fixtures" / "price_parsers" / "active"
+)
+
 #: Suffix that pairs a fixture file with its independently-verified price.
 EXPECTED_SUFFIX: Final[str] = ".expected.json"
 
@@ -271,6 +282,7 @@ async def _run_one_fixture(
 
 
 __all__ = [
+    "DEFAULT_SMOKE_FIXTURES_DIR",
     "EXPECTED_SUFFIX",
     "SMOKE_TEST_FAILED_REASON",
     "FixtureOutcome",
