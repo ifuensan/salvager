@@ -44,9 +44,7 @@ async def _counting_runner(counter: list[int]) -> None:
     counter[0] += 1
 
 
-def _gate(
-    *, last: datetime | None, now: datetime, counter: list[int]
-) -> smoke_job_mod.SmokeRunner:
+def _gate(*, last: datetime | None, now: datetime, counter: list[int]) -> smoke_job_mod.SmokeRunner:
     return build_scheduled_smoke_task(
         runner=lambda: _counting_runner(counter),
         state_reader=_FakeStateReader(last),
