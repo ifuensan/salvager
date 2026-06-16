@@ -12,6 +12,31 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.3.2] — 2026-06-16
+
+Phase 2 was un-armable in production — this release fixes the gap so the
+autonomous-buy path can actually be exercised during burn-in.
+
+**Smoke-test ships + runs in production (unblocks Phase 2)**
+
+- The Phase 2 buy preflight requires a *fresh passing* price-parser
+  smoke-test, but the smoke fixtures weren't in the image (the Dockerfile
+  ships only `src/`) and nothing scheduled a smoke (`smoke_test_hour_utc`
+  had no consumer). So every alert silently downgraded to Phase 1 — no
+  Comprar button, no buy.
+- Smoke fixtures relocated into the package
+  (`src/salvager/smoke_fixtures/price_parsers/`) so they ship with the
+  image and a built wheel; the default fixtures dir now resolves relative
+  to the installed package, and a guard test fails CI if they stop
+  shipping.
+- The daemon now runs the smoke once on startup (so the signal is fresh
+  right after a deploy) and once per UTC day at `smoke_test_hour_utc`
+  (hour-gated, since the scheduler is interval-only), registered as
+  `phase2_smoke_test`. Reuses the existing `run_smoke_test` orchestrator;
+  no buy-path / preflight / parser changes.
+
+---
+
 ## [0.3.1] — 2026-06-13
 
 Surfaced during the v0.3.0 burn-in: the operator had no way to click
