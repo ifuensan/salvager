@@ -2,7 +2,7 @@
 
 - [x] 1.1 Move `tests/fixtures/price_parsers/active/*` (8 files) → `src/salvager/smoke_fixtures/price_parsers/active/`; move the `tests/fixtures/price_parsers/README.md` note too (or add one under the new dir).
 - [x] 1.2 Repoint `_DEFAULT_FIXTURES_DIR` in `cli/app.py` to a package-relative path (`Path(__file__).resolve().parent.parent / "smoke_fixtures/price_parsers/active"`); keep the `--fixtures-dir` override.
-- [x] 1.3 Add pyproject package-data / force-include so the fixtures ship in a built wheel.
+- [x] 1.3 Ensure the fixtures ship in a built wheel. VERIFIED `uv_build` includes all files under the package by default — `uv build --wheel` produces a wheel containing `salvager/smoke_fixtures/price_parsers/...` (all 8 + README), so NO explicit pyproject package-data is needed. The guard test (1.5) fails CI if they ever stop shipping.
 - [x] 1.4 Repoint `tests/unit/test_smoke_test.py` and `tests/unit/test_phase2_parsers.py` to the new location (shared constant) and confirm they pass.
 - [x] 1.5 Add a guard test that the default fixtures dir resolves and is non-empty from the installed package (fails CI if fixtures stop shipping).
 

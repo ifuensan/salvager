@@ -81,6 +81,25 @@ async def test_gate_runs_next_day() -> None:
     assert counter[0] == 1
 
 
+async def test_gate_swallows_state_reader_failure() -> None:
+    """A transient store failure reading phase2_state must not propagate into
+    the scheduler's job loop, and must not fire the runner."""
+    counter = [0]
+
+    class _BoomReader:
+        async def read(self) -> Phase2StateSnapshot:
+            raise RuntimeError("db locked")
+
+    task = build_scheduled_smoke_task(
+        runner=lambda: _counting_runner(counter),
+        state_reader=_BoomReader(),
+        hour_utc=6,
+        clock=lambda: _at(6),
+    )
+    await task()  # must not raise
+    assert counter[0] == 0
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Runner: never raises; calls run_smoke_test with discovered fixtures
 # ─────────────────────────────────────────────────────────────────────────

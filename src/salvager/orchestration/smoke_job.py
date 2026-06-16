@@ -124,12 +124,22 @@ def build_scheduled_smoke_task(
         now = clock()
         if now.hour != hour_utc:
             return
-        state = await state_reader.read()
+        # Guard the gate the same way the runner guards itself: a transient
+        # store failure reading phase2_state must not propagate into the
+        # scheduler's job loop (matches this module's swallow-and-log contract).
+        try:
+            state = await state_reader.read()
+        except Exception as exc:
+            log.error(
+                "scheduled_smoke_test_state_read_failed",
+                extra={"error_class": exc.__class__.__name__},
+            )
+            return
         last = state.last_smoke_at
         if last is not None and last.astimezone(UTC).date() == now.date():
             return  # already ran this UTC day
         log.info("scheduled_smoke_test_firing", extra={"hour_utc": hour_utc})
-        await runner()
+        await runner()  # runner swallows its own errors
 
     return _task
 
