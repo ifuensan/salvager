@@ -26,7 +26,7 @@ The v0.2.x line ships all Phase 1 + Phase 2 code. v1.0.0 is gated on production 
 
 **Promotion criteria** (informal; tightened if reality requires it):
 
-1. ≥ 2 weeks of the current stable image (`:0.3.1` recommended) running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
+1. ≥ 2 weeks of the current stable image (`:0.3.2` recommended) running continuously against live Wallapop + eBay.es traffic without unhandled crashes.
 2. ≥ 1 Phase 2 purchase completed end-to-end (or one verified Phase 2 abort with the safety stack engaging as designed). Counts as "the autonomous-buy path got exercised against the real world, not just synthetic tests".
 3. No critical rendering regression surfaced between v0.2.x and the v1.0.0 candidate (re-audit if `domain/alert.py` or the styling layer changes).
 4. **OQ3** — measured per-purchase TinyFish Browser cost (NFR-C2 cap is ≤ €1.00). v0.2.x is when this number first appears empirically; v1.0.0 confirms it.
