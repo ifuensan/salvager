@@ -114,6 +114,37 @@ async def test_start_is_idempotent() -> None:
     assert len(scheduler.registered) == 1
 
 
+async def test_start_registers_smoke_job_and_runs_startup_smoke() -> None:
+    """When a smoke job is wired it registers as ``phase2_smoke_test`` and the
+    one-shot startup runner fires exactly once on start."""
+    scheduler = _FakeScheduler()
+    startup_runs = 0
+
+    async def _startup() -> None:
+        nonlocal startup_runs
+        startup_runs += 1
+
+    daemon = Daemon(
+        scheduler=scheduler,
+        wallapop_job=_noop,
+        smoke_job=_noop,
+        smoke_cadence_minutes=30,
+        smoke_startup=_startup,
+    )
+    await daemon.start()
+
+    cadences = {name: cad for name, cad, _ in scheduler.registered}
+    assert cadences["phase2_smoke_test"] == 30
+    assert startup_runs == 1
+
+
+async def test_start_without_smoke_job_registers_no_smoke() -> None:
+    scheduler = _FakeScheduler()
+    daemon = Daemon(scheduler=scheduler, wallapop_job=_noop)
+    await daemon.start()
+    assert "phase2_smoke_test" not in [name for name, _, _ in scheduler.registered]
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Shutdown — drains scheduler, emits daemon_stopped, idempotent
 # ─────────────────────────────────────────────────────────────────────────

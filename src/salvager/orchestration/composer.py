@@ -85,9 +85,15 @@ from salvager.orchestration.circuit_breaker import CircuitBreaker
 from salvager.orchestration.daemon import Daemon
 from salvager.orchestration.degradation_reporter import DegradationReporter
 from salvager.orchestration.health_state import HealthState
+from salvager.orchestration.phase2_parsers import default_price_parser_registry
 from salvager.orchestration.phase2_preflight import Phase2Preflight
 from salvager.orchestration.poll_loop import run_poll_cycle
 from salvager.orchestration.reconciler import Reconciler
+from salvager.orchestration.smoke_job import (
+    build_scheduled_smoke_task,
+    build_smoke_runner,
+)
+from salvager.orchestration.smoke_test import DEFAULT_SMOKE_FIXTURES_DIR
 from salvager.orchestration.wallapop_fallback import WallapopFallbackFetcher
 
 #: Path under ``data_dir`` where Story 2.9 writes the Wallapop cookie jar
@@ -257,19 +263,13 @@ def compose_daemon(
             "`salvager login ebay` first"
         )
 
-    daemon = Daemon(
-        scheduler=scheduler,
-        wallapop_job=wallapop_job,
-        wallapop_cadence_minutes=config.schedule.wallapop_minutes,
-        ebay_job=ebay_job,
-        ebay_cadence_minutes=config.schedule.ebay_minutes,
-    )
-
     # Phase 2 buy orchestrator — operator-confirmed checkout. The
     # orchestrator fires only when an operator taps the Comprar button
     # on a Phase 2 alert; it never auto-buys. Marketplace dispatch lives
     # in the per-marketplace wrappers (see marketplace_dispatch.py) so
     # the orchestrator can hold a single browser + single fetcher.
+    # Built before the Daemon because its audit-writer + state-reader feed
+    # the scheduled smoke-test job below.
     phase2 = _build_buy_orchestrator(
         env=env,
         config=config,
@@ -282,6 +282,37 @@ def compose_daemon(
         ebay_tokens_path=ebay_tokens_path if ebay_enabled else None,
         ebay_quota=ebay_quota,
     )
+
+    # Phase 2 price-parser smoke-test. Keeps the preflight freshness signal
+    # green so opted-in entries stay armable: one run on startup + an
+    # hour-gated daily run at config.phase2.smoke_test_hour_utc. Reuses the
+    # buy bundle's audit-writer / state-reader so the result lands on the
+    # same phase2_state the preflight reads.
+    smoke_runner = build_smoke_runner(
+        fixtures_dir=DEFAULT_SMOKE_FIXTURES_DIR,
+        parsers=default_price_parser_registry(),
+        audit_writer=phase2.audit_writer,
+        state_reader=phase2.state_reader,
+        reporter=reporter,
+        tolerance_eur=config.phase2.reconciliation_tolerance_eur,
+        tolerance_pct=config.phase2.reconciliation_tolerance_pct,
+    )
+    smoke_task = build_scheduled_smoke_task(
+        runner=smoke_runner,
+        state_reader=phase2.state_reader,
+        hour_utc=config.phase2.smoke_test_hour_utc,
+    )
+
+    daemon = Daemon(
+        scheduler=scheduler,
+        wallapop_job=wallapop_job,
+        wallapop_cadence_minutes=config.schedule.wallapop_minutes,
+        ebay_job=ebay_job,
+        ebay_cadence_minutes=config.schedule.ebay_minutes,
+        smoke_job=smoke_task,
+        smoke_startup=smoke_runner,
+    )
+
     dispatcher = CallbackDispatcher(
         store=store,
         surface=telegram,

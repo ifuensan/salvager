@@ -27,6 +27,7 @@ from typing import Final
 
 from salvager.interfaces.scheduler import Scheduler
 from salvager.observability.logging import get_logger
+from salvager.orchestration.smoke_job import DEFAULT_SMOKE_CADENCE_MINUTES
 
 #: Default cadence (minutes) per marketplace if config.yaml omits them.
 DEFAULT_WALLAPOP_CADENCE_MINUTES: Final[int] = 15
@@ -49,6 +50,9 @@ class Daemon:
         wallapop_cadence_minutes: int = DEFAULT_WALLAPOP_CADENCE_MINUTES,
         ebay_job: Callable[[], Awaitable[None]] | None = None,
         ebay_cadence_minutes: int = DEFAULT_EBAY_CADENCE_MINUTES,
+        smoke_job: Callable[[], Awaitable[None]] | None = None,
+        smoke_cadence_minutes: int = DEFAULT_SMOKE_CADENCE_MINUTES,
+        smoke_startup: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         if wallapop_job is None and ebay_job is None:
             raise ValueError("Daemon must be given at least one marketplace job to run")
@@ -57,6 +61,13 @@ class Daemon:
         self._wallapop_cadence_minutes = wallapop_cadence_minutes
         self._ebay_job = ebay_job
         self._ebay_cadence_minutes = ebay_cadence_minutes
+        # Optional Phase 2 price-parser smoke-test: an hour-gated scheduled job
+        # (``smoke_job``) that keeps the preflight freshness signal green, plus
+        # a one-shot ``smoke_startup`` run so the signal is fresh right after a
+        # (re)deploy. Both no-op when Phase 2 isn't composed.
+        self._smoke_job = smoke_job
+        self._smoke_cadence_minutes = smoke_cadence_minutes
+        self._smoke_startup = smoke_startup
         self._shutdown_event = asyncio.Event()
         self._started = False
         self._log = get_logger("orchestration.daemon")
@@ -94,8 +105,28 @@ class Daemon:
                 }
             )
 
+        if self._smoke_job is not None:
+            await self._scheduler.register(
+                "phase2_smoke_test",
+                cadence_minutes=self._smoke_cadence_minutes,
+                task=self._smoke_job,
+            )
+            registered.append(
+                {
+                    "name": "phase2_smoke_test",
+                    "cadence_minutes": self._smoke_cadence_minutes,
+                }
+            )
+
         self._started = True
         self._log.info("daemon_started", extra={"jobs": registered})
+
+        # Run one smoke on startup so the Phase 2 preflight freshness signal is
+        # green right after a (re)deploy — otherwise Phase 2 stays blocked until
+        # the next configured hour. The runner swallows + logs its own errors,
+        # so this can't crash the daemon.
+        if self._smoke_startup is not None:
+            await self._smoke_startup()
 
     async def serve_until_shutdown_signal(self) -> None:
         """Block until :meth:`shutdown` flips the internal event.
