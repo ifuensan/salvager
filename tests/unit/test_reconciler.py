@@ -18,10 +18,12 @@ from salvager.domain.alert import AlertSnapshot
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing, SearchQuery
 from salvager.domain.phase2_audit import TransactionRecord
+from salvager.domain.pricing import buyer_total_eur
 from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.orchestration.reconciler import Reconciler
 
 _T0 = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
+_ASSUMED_SHIPPING = Decimal("3.50")
 _ENTRY_KEY = ("Western Digital", "WD Red Plus 4TB", "WD40EFPX")
 _ALERT_ID = UUID("12345678-1234-1234-1234-123456789abc")
 _LISTING_URL = "https://es.wallapop.com/item/abc123"
@@ -95,6 +97,7 @@ def _reconciler(fetcher: PageFetcher) -> Reconciler:
         cross_source_fetcher=fetcher,
         tolerance_eur=Decimal("1.00"),
         tolerance_pct=Decimal("5"),
+        assumed_shipping_eur=_ASSUMED_SHIPPING,
     )
 
 
@@ -142,18 +145,34 @@ async def test_cross_source_fetch_failure_propagates() -> None:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def test_receipt_matches_alert_within_tolerance() -> None:
+def test_receipt_matches_delivered_total_even_above_item_price() -> None:
+    """Shipping + Protección in the receipt must NOT trip reconciliation.
+
+    The expected value is the delivered buyer total (item + shipping + fee),
+    compared like-for-like against the charged total — so a receipt equal to
+    the delivered total passes even though it is well above the item price
+    (shipping-aware-pricing).
+    """
     fetcher = _ScriptedFetcher(response=_listing("0.00"))  # unused on this path
     reconciler = _reconciler(fetcher)
+    snapshot = _alert_snapshot("55.00")
+    delivered = buyer_total_eur(snapshot.listing, assumed_shipping_eur=_ASSUMED_SHIPPING)
+    assert delivered > Decimal("55.00")  # shipping + Protección really are on top
 
-    result = reconciler.reconcile_receipt_vs_alert(_alert_snapshot("55.00"), _transaction("55.50"))
+    result = reconciler.reconcile_receipt_vs_alert(snapshot, _transaction(str(delivered)))
     assert result.passed is True
+    assert result.delta_eur == Decimal("0.00")
 
 
 def test_receipt_mismatch_caught() -> None:
+    """A receipt that drifts beyond tolerance from the delivered total fails."""
     fetcher = _ScriptedFetcher(response=_listing("0.00"))
     reconciler = _reconciler(fetcher)
+    snapshot = _alert_snapshot("48.00")
+    delivered = buyer_total_eur(snapshot.listing, assumed_shipping_eur=_ASSUMED_SHIPPING)
 
-    result = reconciler.reconcile_receipt_vs_alert(_alert_snapshot("48.00"), _transaction("56.00"))
+    result = reconciler.reconcile_receipt_vs_alert(
+        snapshot, _transaction(str(delivered + Decimal("8.00")))
+    )
     assert result.passed is False
     assert result.delta_eur == Decimal("8.00")

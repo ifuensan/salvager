@@ -31,6 +31,7 @@ from salvager.domain.errors import BuyFailureReason
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 from salvager.domain.phase2_audit import TransactionRecord
+from salvager.domain.pricing import BuyerCost
 
 Phase = Literal["phase1", "phase2"]
 ParseMode = Literal["MarkdownV2"]
@@ -258,6 +259,22 @@ def _deeplink_row(listing: Listing) -> str:
     return "🔗 " + _md_v2_link(f"Ver anuncio en {marketplace}", listing.url)
 
 
+def _cost_line(cost: BuyerCost) -> str:
+    """Render the buyer-total breakdown row (shipping-aware-pricing).
+
+    ``💶 <item> + <shipping> envío[ (est.)][ + <fee> Protección] = <total> €``
+    so the operator sees the full delivered cost before tapping Comprar.
+    ``(est.)`` marks a buffer-estimated shipping; the Protección term shows
+    only on Wallapop (fee > 0). Plain prose → one escape pass.
+    """
+    item = _format_amount_es(cost.item_eur)
+    shipping = _format_amount_es(cost.shipping_eur)
+    shipping_part = f"{shipping} envío (est.)" if cost.shipping_estimated else f"{shipping} envío"
+    fee_part = f" + {_format_amount_es(cost.fee_eur)} Protección" if cost.fee_eur > 0 else ""
+    total = _format_price_es(cost.total_eur)
+    return escape_markdown_v2(f"💶 {item} + {shipping_part}{fee_part} = {total}")
+
+
 def _phase1_button_row(alert_id: str) -> list[InlineButton]:
     """The Phase 1 button row: Ver · Saltar · Posponer 24h (UX-DR4).
 
@@ -276,7 +293,10 @@ def _phase1_button_row(alert_id: str) -> list[InlineButton]:
 
 
 def render_phase1_listing_alert(
-    snapshot: AlertSnapshot, *, comp_summary: CompSummary | None = None
+    snapshot: AlertSnapshot,
+    *,
+    comp_summary: CompSummary | None = None,
+    buyer_cost: BuyerCost | None = None,
 ) -> RenderedAlert:
     """Render a Phase 1 listing alert (Direction A + Direction E hybrid).
 
@@ -317,6 +337,8 @@ def render_phase1_listing_alert(
         f"{severity} *{name}* — *{price}*",
         f"📍 {location} · {marketplace}",
     ]
+    if buyer_cost is not None:
+        rows.append(_cost_line(buyer_cost))
     rows.append(_deeplink_row(listing))
 
     if evaluation.is_container:
@@ -359,6 +381,7 @@ def render_phase2_listing_alert(
     phase2_max_price_eur: Decimal,
     *,
     comp_summary: CompSummary | None = None,
+    buyer_cost: BuyerCost | None = None,
 ) -> RenderedAlert:
     """Render a Phase 2 listing alert (Story 5.2 / FR23 / FR24 / UX-DR7).
 
@@ -396,6 +419,8 @@ def render_phase2_listing_alert(
         f"{severity} *{name}* — *{price}*",
         f"📍 {location} · {marketplace}",
     ]
+    if buyer_cost is not None:
+        rows.append(_cost_line(buyer_cost))
     rows.append(_deeplink_row(listing))
 
     if evaluation.is_container:

@@ -290,6 +290,12 @@ class BuyOrchestrator:
                 ctx={
                     "reason": RECEIPT_MISMATCH_REASON,
                     "last_affected_entry": snapshot.entry_display_name,
+                    # Surface the breakdown so the operator can see whether the
+                    # drift is in the item price or shipping/fees: reconciliation
+                    # now compares delivered totals (shipping-aware-pricing).
+                    "item_price_eur": str(snapshot.listing.price_eur),
+                    "receipt_total_eur": str(txn.price_paid_eur),
+                    "delta_eur": str(receipt_check.delta_eur),
                 },
             )
 

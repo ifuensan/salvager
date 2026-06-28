@@ -234,42 +234,14 @@ def compose_daemon(
     # in-memory counter must be a single instance across them.
     ebay_quota = DailyQuotaTracker(config.ebay.daily_request_quota) if ebay_enabled else None
 
-    wallapop_job = _build_wallapop_job(
-        env=env,
-        config=config,
-        data_dir=data_dir,
-        wishlist=wishlist,
-        evaluator=evaluator,
-        store=store,
-        telegram=telegram,
-        reporter=reporter,
-        log=log,
-    )
-    ebay_job = _build_ebay_job(
-        env=env,
-        data_dir=data_dir,
-        wishlist=wishlist,
-        evaluator=evaluator,
-        store=store,
-        telegram=telegram,
-        quota=ebay_quota,
-        log=log,
-    )
-
-    if wallapop_job is None and ebay_job is None:
-        raise NoMarketplacesEnabledError(
-            "no marketplace credentials found: run "
-            "`salvager login wallapop` and/or "
-            "`salvager login ebay` first"
-        )
-
-    # Phase 2 buy orchestrator — operator-confirmed checkout. The
-    # orchestrator fires only when an operator taps the Comprar button
-    # on a Phase 2 alert; it never auto-buys. Marketplace dispatch lives
-    # in the per-marketplace wrappers (see marketplace_dispatch.py) so
-    # the orchestrator can hold a single browser + single fetcher.
-    # Built before the Daemon because its audit-writer + state-reader feed
-    # the scheduled smoke-test job below.
+    # Phase 2 buy orchestrator + preflight — built BEFORE the poll jobs so the
+    # jobs receive the SAME preflight and can render Comprar buttons. Without
+    # threading it in, run_poll_cycle gets ``phase2_preflight=None`` and every
+    # alert silently stays Phase 1 (no Comprar) — the orchestrator alone never
+    # produces a buyable alert. The orchestrator itself fires only on an
+    # operator Comprar tap; it never auto-buys. Built unconditionally (it uses
+    # stub fetchers for any marketplace the daemon wasn't composed with), and
+    # its audit-writer + state-reader also feed the scheduled smoke-test below.
     phase2 = _build_buy_orchestrator(
         env=env,
         config=config,
@@ -282,6 +254,37 @@ def compose_daemon(
         ebay_tokens_path=ebay_tokens_path if ebay_enabled else None,
         ebay_quota=ebay_quota,
     )
+
+    wallapop_job = _build_wallapop_job(
+        env=env,
+        config=config,
+        data_dir=data_dir,
+        wishlist=wishlist,
+        evaluator=evaluator,
+        store=store,
+        telegram=telegram,
+        reporter=reporter,
+        phase2_preflight=phase2.preflight,
+        log=log,
+    )
+    ebay_job = _build_ebay_job(
+        env=env,
+        data_dir=data_dir,
+        wishlist=wishlist,
+        evaluator=evaluator,
+        store=store,
+        telegram=telegram,
+        quota=ebay_quota,
+        phase2_preflight=phase2.preflight,
+        log=log,
+    )
+
+    if wallapop_job is None and ebay_job is None:
+        raise NoMarketplacesEnabledError(
+            "no marketplace credentials found: run "
+            "`salvager login wallapop` and/or "
+            "`salvager login ebay` first"
+        )
 
     # Phase 2 price-parser smoke-test. Keeps the preflight freshness signal
     # green so opted-in entries stay armable: one run on startup + an
@@ -409,6 +412,7 @@ def _build_wallapop_job(
     store: SqliteStore,
     telegram: TelegramBotSurface,
     reporter: DegradationReporter,
+    phase2_preflight: Phase2Preflight,
     log: object,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the Wallapop poll closure, or return None when cookies are missing."""
@@ -441,6 +445,7 @@ def _build_wallapop_job(
             evaluator=evaluator,
             store=store,
             telegram=telegram,
+            phase2_preflight=phase2_preflight,
         )
         # Persist the API-path health to `_meta` so `health` can report
         # "wallapop_api degraded / wallapop_tinyfish healthy" without
@@ -462,6 +467,7 @@ def _build_ebay_job(
     store: SqliteStore,
     telegram: TelegramBotSurface,
     quota: DailyQuotaTracker | None,
+    phase2_preflight: Phase2Preflight,
     log: object,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the eBay poll closure, or return None when OAuth tokens are missing.
@@ -494,6 +500,7 @@ def _build_ebay_job(
             evaluator=evaluator,
             store=store,
             telegram=telegram,
+            phase2_preflight=phase2_preflight,
         )
 
     return _ebay_cycle
@@ -517,6 +524,10 @@ class _Phase2Bundle:
     client)."""
 
     orchestrator: BuyOrchestrator
+    #: The SAME preflight the poll loop uses to decide Phase 2 vs Phase 1
+    #: rendering — exposed so the poll jobs render Comprar buttons (without
+    #: it, run_poll_cycle gets None and every alert silently stays Phase 1).
+    preflight: Phase2Preflight
     audit_writer: Phase2AuditWriter
     state_reader: SqlitePhase2StateReader
     wallapop_pay: WallapopPayFlow
@@ -612,6 +623,7 @@ def _build_buy_orchestrator(
     preflight = Phase2Preflight(
         state_reader=state_reader,
         circuit_breaker_threshold=config.phase2.circuit_breaker_threshold,
+        assumed_shipping_eur=config.pricing.assumed_shipping_eur,
     )
     circuit_breaker = CircuitBreaker(
         audit_writer=audit_writer,
@@ -652,6 +664,7 @@ def _build_buy_orchestrator(
         cross_source_fetcher=recon_fetcher,
         tolerance_eur=config.phase2.reconciliation_tolerance_eur,
         tolerance_pct=config.phase2.reconciliation_tolerance_pct,
+        assumed_shipping_eur=config.pricing.assumed_shipping_eur,
     )
 
     # Both browser flows share the TinyFish API key — marketplace login
@@ -676,6 +689,7 @@ def _build_buy_orchestrator(
     )
     return _Phase2Bundle(
         orchestrator=orchestrator,
+        preflight=preflight,
         audit_writer=audit_writer,
         state_reader=state_reader,
         wallapop_pay=wallapop_pay,

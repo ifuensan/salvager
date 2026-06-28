@@ -813,7 +813,7 @@ def _healthy_state() -> Phase2StateSnapshot:
 
 async def test_phase2_alert_dispatched_when_preflight_passes() -> None:
     entry = _phase2_entry()
-    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("55.00"))])
+    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("45.00"))])
     evaluator = _FakeEvaluator()
     store = _FakeStore()
     telegram = _FakeTelegram()
@@ -852,7 +852,7 @@ async def test_phase2_alert_carries_comp_line_when_reserved_comps_present() -> N
     entry = _phase2_entry()
     fetcher = _FakeFetcher(
         response=[
-            _listing("buyable1", price=Decimal("55.00")),
+            _listing("buyable1", price=Decimal("45.00")),
             _listing("res1", price=Decimal("80.00"), is_reserved=True),
             _listing("res2", price=Decimal("230.00"), is_reserved=True),
         ]
@@ -890,7 +890,7 @@ async def test_phase2_downgrades_silently_when_preflight_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     entry = _phase2_entry()
-    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("55.00"))])
+    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("45.00"))])
     evaluator = _FakeEvaluator()
     store = _FakeStore()
     telegram = _FakeTelegram()
@@ -948,6 +948,39 @@ async def test_phase1_path_unchanged_when_no_preflight_supplied() -> None:
     persisted = store.snapshots[0]
     assert persisted.phase == "phase1"
     assert persisted.phase2_max_price_eur is None
+
+
+async def test_listing_over_buyer_total_ceiling_is_dropped(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A buyable listing whose item price is under the entry ceiling but whose
+    delivered buyer total (item + shipping buffer + Wallapop Protección) exceeds
+    it is dropped before the LLM eval — no alert (shipping-aware-pricing)."""
+    # Ceiling 60 €; item 58 € is under it, but 58 + 3,50 buffer + Protección
+    # pushes the buyer total over 60 €.
+    entry = _entry(max_price_solo=Decimal("60.00"))
+    fetcher = _FakeFetcher(response=[_listing("abc123", price=Decimal("58.00"))])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 0
+    assert summary.dropped_count == 1
+    assert not store.snapshots
+    assert evaluator.calls == []  # gated before the LLM eval — no eval cost
+    # Recorded as seen so it doesn't reprocess every cycle.
+    assert ("abc123", entry.entry_key) in store.seen
+
+    records = _records(capsys.readouterr().out)
+    drops = [r for r in records if r.get("event") == "listing_dropped_over_ceiling"]
+    assert len(drops) == 1
+    assert drops[0]["ceiling_eur"] == "60.00"
 
 
 # ─────────────────────────────────────────────────────────────────────────

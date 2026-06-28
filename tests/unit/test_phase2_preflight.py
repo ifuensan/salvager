@@ -61,14 +61,23 @@ def _entry(**phase2_overrides: object) -> WishlistEntry:
     )
 
 
-def _listing(price: str = "55.00") -> Listing:
+def _listing(
+    price: str = "45.00",
+    *,
+    marketplace: str = "wallapop",
+    shipping_eur: str | None = None,
+) -> Listing:
+    # Default price leaves headroom for the buyer total (item + shipping
+    # buffer + Wallapop Protección) under the 60 € Phase 2 ceiling so the
+    # happy path stays eligible (shipping-aware-pricing).
     return Listing(
         listing_id="abc123",
-        marketplace="wallapop",
+        marketplace=marketplace,  # type: ignore[arg-type]
         url="https://wallapop.com/item/abc123",
         title="WD Red Plus 4TB",
         description="ok",
         price_eur=Decimal(price),
+        shipping_eur=Decimal(shipping_eur) if shipping_eur is not None else None,
         location="Madrid",
         photo_urls=[],
         fetched_at=_T0,
@@ -138,6 +147,25 @@ async def test_max_price_unset_is_ineligible() -> None:
 async def test_listing_above_phase2_max_is_ineligible() -> None:
     result = await _preflight(_state()).check(_entry(), _listing(price="61.00"), _evaluation())
     assert result.reason == "phase2_max_price_below_listing"
+
+
+async def test_item_under_ceiling_but_buyer_total_over_is_ineligible() -> None:
+    """The gate compares the delivered total, not the item price.
+
+    A 59 € item is under the 60 € ceiling, but once the shipping buffer and
+    Wallapop Protección are added the buyer total exceeds it → ineligible
+    (shipping-aware-pricing).
+    """
+    result = await _preflight(_state()).check(_entry(), _listing(price="59.00"), _evaluation())
+    assert result.reason == "phase2_max_price_below_listing"
+
+
+async def test_known_shipping_within_ceiling_is_eligible() -> None:
+    """An eBay listing (no Protección fee) whose item + known shipping sits
+    under the ceiling stays buyable."""
+    listing = _listing(price="55.00", marketplace="ebay", shipping_eur="3.00")
+    result = await _preflight(_state()).check(_entry(), listing, _evaluation())
+    assert result == Phase2EligibilityResult(eligible=True)
 
 
 async def test_confidence_below_threshold_is_ineligible() -> None:

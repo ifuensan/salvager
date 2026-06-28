@@ -20,6 +20,12 @@ from salvager.adapters.ebay_api import (
     OAuthTokens,
     OAuthTokenStore,
 )
+from salvager.adapters.ebay_api.fetcher import _item_to_listing
+from salvager.adapters.ebay_api.schema import (
+    EbayApiItem,
+    EbayApiPrice,
+    EbayApiShippingOption,
+)
 from salvager.adapters.ebay_api.tokens import (
     OAUTH_TOKEN_FILE_MODE,
     parse_expires_in,
@@ -205,6 +211,44 @@ async def test_search_replays_fixture_into_two_listings(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_drops_listings_over_buyer_total_ceiling(tmp_path: Path) -> None:
+    """The API ``price:[..max]`` filter is item-level; the fetcher additionally
+    drops listings whose item + shipping exceeds the ceiling post-fetch
+    (shipping-aware-pricing)."""
+    payload = {
+        "itemSummaries": [
+            {
+                "itemId": "v1|within|0",
+                "title": "Cheap shipping",
+                "price": {"value": "50.00", "currency": "EUR"},
+                "shippingOptions": [{"shippingCost": {"value": "5.00", "currency": "EUR"}}],
+            },
+            {
+                "itemId": "v1|over|0",
+                "title": "Pricey shipping",
+                "price": {"value": "58.00", "currency": "EUR"},
+                "shippingOptions": [{"shippingCost": {"value": "10.00", "currency": "EUR"}}],
+            },
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listings = await fetcher.search(
+            SearchQuery(keyword="x", marketplace="ebay", max_price_eur=Decimal("60.00"))
+        )
+    finally:
+        await fetcher.aclose()
+
+    # 50 + 5 shipping = 55 ≤ 60 kept; 58 + 10 = 68 > 60 dropped even though its
+    # item price (58 €) is under the ceiling.
+    assert [listing.listing_id for listing in listings] == ["v1|within|0"]
+
+
+@pytest.mark.asyncio
 async def test_search_succeeded_log_carries_quota_remaining(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -383,3 +427,32 @@ def test_fetcher_module_never_disables_tls_verification() -> None:
                 )
                 if is_verify_false:
                     pytest.fail(f"fetcher.py passes verify=False at line {node.lineno} — NFR-S3")
+
+
+def _ebay_item(**overrides: Any) -> EbayApiItem:
+    base: dict[str, Any] = {
+        "itemId": "v1|1|0",
+        "title": "Corsair Vengeance LPX 16GB",
+        "price": EbayApiPrice(value=Decimal("63.66"), currency="EUR"),
+    }
+    base.update(overrides)
+    return EbayApiItem(**base)
+
+
+def test_item_to_listing_parses_cheapest_shipping() -> None:
+    item = _ebay_item(
+        shippingOptions=[
+            EbayApiShippingOption(
+                shippingCost=EbayApiPrice(value=Decimal("19.99"), currency="EUR")
+            ),
+            EbayApiShippingOption(
+                shippingCost=EbayApiPrice(value=Decimal("16.82"), currency="EUR")
+            ),
+            EbayApiShippingOption(shippingCost=None),  # e.g. local pickup
+        ]
+    )
+    assert _item_to_listing(item).shipping_eur == Decimal("16.82")
+
+
+def test_item_to_listing_shipping_none_when_no_priced_option() -> None:
+    assert _item_to_listing(_ebay_item()).shipping_eur is None

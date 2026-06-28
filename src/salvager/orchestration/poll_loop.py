@@ -58,6 +58,7 @@ from salvager.domain.alert import (
 from salvager.domain.comps import CompSummary, summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing, Marketplace, SearchQuery
+from salvager.domain.pricing import DEFAULT_ASSUMED_SHIPPING_EUR, buyer_cost, buyer_total_eur
 from salvager.domain.wishlist import Wishlist, WishlistEntry
 from salvager.interfaces.listing_evaluator import ListingEvaluator
 from salvager.interfaces.page_fetcher import PageFetcher
@@ -127,6 +128,14 @@ async def run_poll_cycle(
     summary = PollCycleSummary(marketplace=marketplace)
     semaphore = asyncio.Semaphore(max_concurrent_evaluations)
     now = clock()
+    # Shipping buffer for the buyer-total gate + alert breakdown. The preflight
+    # carries the config value (composer wires it); Phase 1-only daemons fall
+    # back to the documented default (shipping-aware-pricing).
+    shipping_buffer = (
+        phase2_preflight.assumed_shipping_eur
+        if phase2_preflight is not None
+        else DEFAULT_ASSUMED_SHIPPING_EUR
+    )
 
     for entry in wishlist.entries:
         snooze_until = await store.get_snooze_until(entry.entry_key)
@@ -209,6 +218,20 @@ async def run_poll_cycle(
                 },
             )
             await _record_reserved_as_seen(reserved, entry, store, summary, log)
+
+        # Authoritative ceiling gate on the delivered buyer total (item +
+        # shipping + Wallapop Protección), applied before the LLM eval so an
+        # over-ceiling listing never costs an evaluation or reaches the alert
+        # path (shipping-aware-pricing).
+        buyable = await _filter_over_ceiling(
+            buyable,
+            entry,
+            store,
+            summary,
+            assumed_shipping_eur=shipping_buffer,
+            marketplace=marketplace,
+            log=log,
+        )
 
         if not buyable:
             continue
@@ -305,10 +328,73 @@ def _build_search_queries(entry: WishlistEntry, marketplace: Marketplace) -> lis
     canonical ``model`` when the wishlist omits ``keywords``.
     """
     keywords = list(entry.keywords) or [entry.model]
-    max_price = entry.max_price_solo or entry.max_price_in_device
+    max_price = _entry_ceiling(entry)
     return [
         SearchQuery(keyword=kw, marketplace=marketplace, max_price_eur=max_price) for kw in keywords
     ]
+
+
+def _entry_ceiling(entry: WishlistEntry) -> Decimal | None:
+    """The entry's price ceiling — solo price preferred, else in-device.
+
+    Used both for the item-level search pre-filter and the authoritative
+    post-fetch buyer-total gate (shipping-aware-pricing).
+    """
+    return entry.max_price_solo or entry.max_price_in_device
+
+
+async def _filter_over_ceiling(
+    buyable: list[Listing],
+    entry: WishlistEntry,
+    store: Store,
+    summary: PollCycleSummary,
+    *,
+    assumed_shipping_eur: Decimal,
+    marketplace: Marketplace,
+    log: object,
+) -> list[Listing]:
+    """Drop listings whose delivered buyer total exceeds the entry ceiling.
+
+    The search pre-filter caps the *item* price; this is the authoritative
+    gate on the total the buyer actually pays (item + shipping + Wallapop
+    Protección — shipping-aware-pricing). A listing at/under the item
+    ceiling but over it once shipping/fees are added is dropped here, before
+    the LLM eval, and recorded as seen + counted as dropped — mirroring the
+    below-threshold drop path.
+    """
+    ceiling = _entry_ceiling(entry)
+    if ceiling is None:
+        return buyable
+    within: list[Listing] = []
+    for listing in buyable:
+        total = buyer_total_eur(listing, assumed_shipping_eur=assumed_shipping_eur)
+        if total <= ceiling:
+            within.append(listing)
+            continue
+        summary.dropped_count += 1
+        log.info(  # type: ignore[attr-defined]
+            "listing_dropped_over_ceiling",
+            extra={
+                "marketplace": marketplace,
+                "entry_display_name": entry.display_name,
+                "listing_id": listing.listing_id,
+                "item_price_eur": str(listing.price_eur),
+                "buyer_total_eur": str(total),
+                "ceiling_eur": str(ceiling),
+            },
+        )
+        try:
+            await store.record_seen(listing, entry.entry_key)
+        except Exception as exc:
+            summary.errors += 1
+            log.exception(  # type: ignore[attr-defined]
+                "poll_record_seen_failed",
+                extra={
+                    "listing_id": listing.listing_id,
+                    "error_class": exc.__class__.__name__,
+                },
+            )
+    return within
 
 
 async def _filter_unseen(
@@ -485,11 +571,23 @@ async def _dispatch_alert(
         rendered_at=clock(),
     )
 
+    # Buyer-total breakdown for the alert (item + shipping + Wallapop fee).
+    # The buffer for unknown shipping comes from the preflight (composer sets
+    # it from config); fall back to the default for Phase 1-only daemons.
+    buffer = (
+        phase2_preflight.assumed_shipping_eur
+        if phase2_preflight is not None
+        else DEFAULT_ASSUMED_SHIPPING_EUR
+    )
+    cost = buyer_cost(listing, assumed_shipping_eur=buffer)
+
     try:
         rendered = (
-            render_phase2_listing_alert(snapshot, phase2_max_price_eur, comp_summary=comp_summary)
+            render_phase2_listing_alert(
+                snapshot, phase2_max_price_eur, comp_summary=comp_summary, buyer_cost=cost
+            )
             if phase == "phase2" and phase2_max_price_eur is not None
-            else render_phase1_listing_alert(snapshot, comp_summary=comp_summary)
+            else render_phase1_listing_alert(snapshot, comp_summary=comp_summary, buyer_cost=cost)
         )
         _message_id = await telegram.send(rendered)
     except Exception as exc:

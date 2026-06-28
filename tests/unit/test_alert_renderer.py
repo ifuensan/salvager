@@ -18,6 +18,7 @@ from salvager.domain.alert import (
 )
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
+from salvager.domain.pricing import buyer_cost
 
 # A stable UUID + datetime so snapshot tests are deterministic.
 FIXED_ALERT_ID = UUID("12345678-1234-1234-1234-123456789abc")
@@ -155,6 +156,41 @@ def test_direct_listing_alert_has_locked_row_anatomy() -> None:
     assert lines[2].startswith("🔗 ")  # clickable deep link to the listing
     assert lines[3].startswith("_") and lines[3].endswith("_")
     assert lines[4].startswith("🔍 Confidence: ")
+
+
+def test_cost_line_shows_known_shipping_breakdown_on_wallapop() -> None:
+    """The breakdown row shows item + shipping + Protección = total when a
+    ``buyer_cost`` is supplied (shipping-aware-pricing). Substrings only —
+    MarkdownV2 escapes '.', '(', ')', '+', '=' but not the comma decimals."""
+    listing = _listing(marketplace="wallapop", price_eur=Decimal("55.00"))
+    cost = buyer_cost(listing, assumed_shipping_eur=Decimal("3.50"))  # shipping unknown
+    rendered = render_phase1_listing_alert(_snapshot(listing=listing), buyer_cost=cost)
+
+    cost_line = next(line for line in rendered.text.split("\n") if line.startswith("💶"))
+    assert "55,00" in cost_line  # item
+    assert "envío" in cost_line
+    assert "Protección" in cost_line  # Wallapop fee present
+    assert "63,32" in cost_line  # delivered total (55 + 3,50 buffer + 4,82 fee)
+
+
+def test_cost_line_flags_estimated_shipping_and_omits_fee_on_ebay() -> None:
+    """An eBay listing with unknown shipping marks the buffer as estimated and
+    carries no Protección term."""
+    listing = _listing(marketplace="ebay", price_eur=Decimal("70.00"), shipping_eur=None)
+    cost = buyer_cost(listing, assumed_shipping_eur=Decimal("3.50"))
+    rendered = render_phase1_listing_alert(_snapshot(listing=listing), buyer_cost=cost)
+
+    cost_line = next(line for line in rendered.text.split("\n") if line.startswith("💶"))
+    assert "envío" in cost_line
+    assert "est" in cost_line  # (est.) flag — buffer applied
+    assert "Protección" not in cost_line  # eBay has no Protección fee
+    assert "73,50" in cost_line  # 70 + 3,50 buffer
+
+
+def test_cost_line_absent_when_no_buyer_cost_supplied() -> None:
+    """Backwards-compatible: no ``buyer_cost`` → no breakdown row."""
+    rendered = render_phase1_listing_alert(_snapshot())
+    assert not any(line.startswith("💶") for line in rendered.text.split("\n"))
 
 
 def test_rendered_alert_parse_mode_is_markdown_v2() -> None:
