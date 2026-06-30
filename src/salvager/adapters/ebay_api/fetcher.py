@@ -65,6 +65,7 @@ class EbayApiFetcher(PageFetcher):
         cert_id: SecretStr,
         *,
         quota: DailyQuotaTracker,
+        assumed_shipping_eur: Decimal = DEFAULT_ASSUMED_SHIPPING_EUR,
         base_url: str = _DEFAULT_BASE_URL,
         marketplace_header: str = _DEFAULT_MARKETPLACE_HEADER,
         client: httpx.AsyncClient | None = None,
@@ -75,6 +76,11 @@ class EbayApiFetcher(PageFetcher):
         self._app_id = app_id
         self._cert_id = cert_id
         self._quota = quota
+        # Buffer for the post-fetch buyer-total filter when an item exposes no
+        # shipping. Composer threads ``config.pricing.assumed_shipping_eur`` so
+        # this matches the Phase 1/Phase 2 gates; defaults to the documented
+        # buffer for CLI/test construction (shipping-aware-pricing).
+        self._assumed_shipping_eur = assumed_shipping_eur
         self._marketplace_header = marketplace_header
         self._owned_client = client is None
         if client is None:
@@ -142,7 +148,7 @@ class EbayApiFetcher(PageFetcher):
             listings = [
                 listing
                 for listing in listings
-                if buyer_total_eur(listing, assumed_shipping_eur=DEFAULT_ASSUMED_SHIPPING_EUR)
+                if buyer_total_eur(listing, assumed_shipping_eur=self._assumed_shipping_eur)
                 <= ceiling
             ]
 

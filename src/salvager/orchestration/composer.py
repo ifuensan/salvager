@@ -234,6 +234,17 @@ def compose_daemon(
     # in-memory counter must be a single instance across them.
     ebay_quota = DailyQuotaTracker(config.ebay.daily_request_quota) if ebay_enabled else None
 
+    # Fail fast on no marketplaces BEFORE building the resource-owning Phase 2
+    # bundle (audit-writer / state-reader / fetchers / browser) — otherwise
+    # those handles would be constructed and then orphaned when we raise, since
+    # the caller never receives them to close.
+    if not wallapop_enabled and not ebay_enabled:
+        raise NoMarketplacesEnabledError(
+            "no marketplace credentials found: run "
+            "`salvager login wallapop` and/or "
+            "`salvager login ebay` first"
+        )
+
     # Phase 2 buy orchestrator + preflight — built BEFORE the poll jobs so the
     # jobs receive the SAME preflight and can render Comprar buttons. Without
     # threading it in, run_poll_cycle gets ``phase2_preflight=None`` and every
@@ -278,13 +289,6 @@ def compose_daemon(
         phase2_preflight=phase2.preflight,
         log=log,
     )
-
-    if wallapop_job is None and ebay_job is None:
-        raise NoMarketplacesEnabledError(
-            "no marketplace credentials found: run "
-            "`salvager login wallapop` and/or "
-            "`salvager login ebay` first"
-        )
 
     # Phase 2 price-parser smoke-test. Keeps the preflight freshness signal
     # green so opted-in entries stay armable: one run on startup + an
@@ -490,6 +494,9 @@ def _build_ebay_job(
         app_id=env.EBAY_APP_ID,
         cert_id=env.EBAY_CERT_ID,
         quota=quota,
+        # Same shipping buffer as the Phase 1/Phase 2 gates so the post-fetch
+        # buyer-total filter doesn't drop listings the configured gate keeps.
+        assumed_shipping_eur=phase2_preflight.assumed_shipping_eur,
     )
 
     async def _ebay_cycle() -> None:
@@ -652,6 +659,7 @@ def _build_buy_orchestrator(
             app_id=env.EBAY_APP_ID,
             cert_id=env.EBAY_CERT_ID,
             quota=ebay_quota,
+            assumed_shipping_eur=config.pricing.assumed_shipping_eur,
         )
         if ebay_tokens_path is not None and ebay_quota is not None
         else _UnavailableMarketplaceFetcher("ebay")

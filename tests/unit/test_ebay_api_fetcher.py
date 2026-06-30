@@ -161,16 +161,21 @@ def _build_fetcher(
     *,
     expires_in_seconds: int = 3600,
     quota_budget: int = 100,
+    assumed_shipping_eur: Decimal | None = None,
 ) -> EbayApiFetcher:
     token_store = _seed_tokens(tmp_path, expires_in_seconds=expires_in_seconds)
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url="https://api.ebay.com")
+    kwargs: dict[str, Any] = {}
+    if assumed_shipping_eur is not None:
+        kwargs["assumed_shipping_eur"] = assumed_shipping_eur
     return EbayApiFetcher(
         token_store,
         SecretStr("APP-ID"),
         SecretStr("CERT-ID"),
         quota=DailyQuotaTracker(budget=quota_budget),
         client=client,
+        **kwargs,
     )
 
 
@@ -246,6 +251,43 @@ async def test_search_drops_listings_over_buyer_total_ceiling(tmp_path: Path) ->
     # 50 + 5 shipping = 55 ≤ 60 kept; 58 + 10 = 68 > 60 dropped even though its
     # item price (58 €) is under the ceiling.
     assert [listing.listing_id for listing in listings] == ["v1|within|0"]
+
+
+@pytest.mark.asyncio
+async def test_post_fetch_filter_honours_configured_shipping_buffer(tmp_path: Path) -> None:
+    """For an item with unknown shipping, the post-fetch filter uses the
+    configured buffer — not the hardcoded default — so it matches the Phase
+    1/Phase 2 gates (shipping-aware-pricing)."""
+    # Item 58 €, no priced shipping option → buffer applies. Ceiling 60 €.
+    payload = {
+        "itemSummaries": [
+            {
+                "itemId": "v1|unknownship|0",
+                "title": "Unknown shipping",
+                "price": {"value": "58.00", "currency": "EUR"},
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    query = SearchQuery(keyword="x", marketplace="ebay", max_price_eur=Decimal("60.00"))
+
+    # Default buffer (3.50) → 58 + 3.50 = 61.50 > 60 → dropped.
+    default_fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        assert await default_fetcher.search(query) == []
+    finally:
+        await default_fetcher.aclose()
+
+    # A lower configured buffer (1.00) → 58 + 1.00 = 59.00 ≤ 60 → kept.
+    low_buffer_fetcher = _build_fetcher(tmp_path, handler, assumed_shipping_eur=Decimal("1.00"))
+    try:
+        kept = await low_buffer_fetcher.search(query)
+    finally:
+        await low_buffer_fetcher.aclose()
+    assert [listing.listing_id for listing in kept] == ["v1|unknownship|0"]
 
 
 @pytest.mark.asyncio

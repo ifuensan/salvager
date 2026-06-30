@@ -48,7 +48,9 @@ class Listing(BaseModel):
     #: ``None`` = unknown / not parsed (e.g. Wallapop in-person-only); ``0`` =
     #: free / included. The delivered buyer total (price + shipping + any
     #: marketplace fee) is computed by :func:`salvager.domain.pricing.buyer_total_eur`.
-    shipping_eur: Decimal | None = None
+    #: Non-negative when present — a negative shipping cost would understate the
+    #: buyer total and could let an over-ceiling listing through the gate.
+    shipping_eur: Decimal | None = Field(default=None, ge=0)
     location: str | None = None
     photo_urls: list[str] = Field(default_factory=list)
     seller_id: str | None = None

@@ -2,7 +2,7 @@
 
 ### Requirement: Listings Carry Shipping And A Buyer-Total Is Computed
 
-`Listing` SHALL carry `shipping_eur: Decimal | None` (`None` = unknown/not-parsed, `0` = free/included). The domain SHALL provide a pure `buyer_total_eur(listing, *, assumed_shipping_eur)` that returns the full delivered cost the buyer pays: the item price, plus shipping (`shipping_eur` when known else `assumed_shipping_eur`), plus — on Wallapop only — the mandatory Protección Wallapop fee. The Protección fee SHALL be `1.69 €` for an item price ≤ 13 €, and `0.69 € + 7.5 % of the item price` (clamped to a documented maximum) above 13 €.
+`Listing` SHALL carry `shipping_eur: Decimal | None` (`None` = unknown/not-parsed, `0` = free/included). The domain SHALL provide a pure `buyer_total_eur(listing, *, assumed_shipping_eur)` that returns the full delivered cost the buyer pays: the item price, plus shipping (`shipping_eur` when known else `assumed_shipping_eur`), plus — on Wallapop only — the mandatory Protección Wallapop fee. The Protección fee SHALL be `1.69 €` for an item price ≤ 13 €, and `0.69 € + 7.5 % of the item price` (clamped to a documented maximum) above 13 €. The buyer total SHALL be rounded to whole cents after summing its components, using half-up rounding (the unit a marketplace charges to).
 
 #### Scenario: Wallapop buyer total includes fee and shipping
 
@@ -30,7 +30,7 @@
 
 ### Requirement: Fetchers Parse Shipping Cost
 
-The Wallapop API and eBay API fetchers SHALL populate `Listing.shipping_eur` from the upstream payload when available (eBay `shippingOptions[].shippingCost`; Wallapop's shipping/envío fields), and SHALL leave it `None` when the payload exposes no shipping price (e.g. in-person-only). Shipping parsing SHALL stay inside the respective adapter packages (adapter-discipline).
+The Wallapop API and eBay API fetchers SHALL populate `Listing.shipping_eur` from the upstream payload when available (eBay `shippingOptions[].shippingCost`; Wallapop's shipping/envío fields), and SHALL leave it `None` when the payload exposes no shipping price (e.g. in-person-only). When an eBay item carries multiple `shippingOptions`, the fetcher SHALL take the **cheapest priced** option, so a multi-option listing is not overestimated against the ceiling. Shipping parsing SHALL stay inside the respective adapter packages (adapter-discipline).
 
 #### Scenario: eBay shipping parsed from the API
 
