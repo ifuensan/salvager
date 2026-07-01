@@ -44,6 +44,7 @@ from salvager.domain.errors import (
     EbaySchemaDrift,
 )
 from salvager.domain.listing import Listing, SearchQuery
+from salvager.domain.pricing import DEFAULT_ASSUMED_SHIPPING_EUR, buyer_total_eur
 from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.observability.logging import get_logger
 
@@ -64,6 +65,7 @@ class EbayApiFetcher(PageFetcher):
         cert_id: SecretStr,
         *,
         quota: DailyQuotaTracker,
+        assumed_shipping_eur: Decimal = DEFAULT_ASSUMED_SHIPPING_EUR,
         base_url: str = _DEFAULT_BASE_URL,
         marketplace_header: str = _DEFAULT_MARKETPLACE_HEADER,
         client: httpx.AsyncClient | None = None,
@@ -74,6 +76,11 @@ class EbayApiFetcher(PageFetcher):
         self._app_id = app_id
         self._cert_id = cert_id
         self._quota = quota
+        # Buffer for the post-fetch buyer-total filter when an item exposes no
+        # shipping. Composer threads ``config.pricing.assumed_shipping_eur`` so
+        # this matches the Phase 1/Phase 2 gates; defaults to the documented
+        # buffer for CLI/test construction (shipping-aware-pricing).
+        self._assumed_shipping_eur = assumed_shipping_eur
         self._marketplace_header = marketplace_header
         self._owned_client = client is None
         if client is None:
@@ -128,12 +135,30 @@ class EbayApiFetcher(PageFetcher):
             raise drift from exc
 
         listings = [_item_to_listing(item) for item in payload.itemSummaries]
+
+        # The API `price:[..max]` filter is item-level. Enforce the ceiling on
+        # the delivered buyer total (item + shipping) post-fetch so shipping
+        # can't push a listing over the ceiling unnoticed (shipping-aware-
+        # pricing). eBay has no Protección fee; when an item exposes no shipping
+        # price the domain buffer applies. The poll loop re-gates with the
+        # configured buffer — this is the quota-side first cut.
+        result_count = len(listings)
+        if query.max_price_eur is not None:
+            ceiling = query.max_price_eur
+            listings = [
+                listing
+                for listing in listings
+                if buyer_total_eur(listing, assumed_shipping_eur=self._assumed_shipping_eur)
+                <= ceiling
+            ]
+
         self._log.info(
             "ebay_search_succeeded",
             extra={
                 "marketplace": "ebay",
                 "latency_ms": int((time.perf_counter() - started) * 1000),
-                "result_count": len(listings),
+                "result_count": result_count,
+                "kept_within_buyer_total": len(listings),
                 "daily_quota_remaining": self._quota.remaining(),
             },
         )
@@ -252,6 +277,21 @@ class EbayApiFetcher(PageFetcher):
             raise EbayApiError(response.status_code, body)
 
 
+def _cheapest_shipping_eur(item: EbayApiItem) -> Decimal | None:
+    """Cheapest priced shipping option (EUR), or None when none is priced.
+
+    eBay returns one or more ``shippingOptions``; some carry no
+    ``shippingCost`` (e.g. local pickup). We take the minimum priced one so
+    the buyer-total ceiling reflects the cheapest delivery the buyer can pick.
+    """
+    costs = [
+        Decimal(str(opt.shippingCost.value))
+        for opt in item.shippingOptions
+        if opt.shippingCost is not None
+    ]
+    return min(costs) if costs else None
+
+
 def _item_to_listing(item: EbayApiItem) -> Listing:
     """Project an upstream ``EbayApiItem`` onto the domain shape."""
     photo_urls: list[str] = []
@@ -265,6 +305,7 @@ def _item_to_listing(item: EbayApiItem) -> Listing:
         title=item.title,
         description=item.shortDescription,
         price_eur=Decimal(str(item.price.value)),
+        shipping_eur=_cheapest_shipping_eur(item),
         location=item.itemLocation.city if item.itemLocation else None,
         photo_urls=photo_urls,
         seller_id=item.seller.username if item.seller else None,

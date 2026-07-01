@@ -64,6 +64,20 @@ phase2:
   smoke_test_hour_utc: 6
 
 # ─────────────────────────────────────────────────────────────────────────
+# pricing — shipping-aware price ceilings (shipping-aware-pricing)
+# ─────────────────────────────────────────────────────────────────────────
+pricing:
+  # Buffer (EUR) used for a listing's shipping when the marketplace doesn't
+  # expose a shipping cost (most Wallapop search results). Price ceilings —
+  # the Phase 1 alert gate and the Phase 2 buy gate — compare the buyer-paid
+  # TOTAL (item + shipping + any Wallapop Protección fee), so unknown
+  # shipping is never silently treated as free. Default ≈ 3,50 € covers a
+  # light ≤2 kg standard parcel within Spain; raise it if you mostly chase
+  # heavier items. eBay shipping is read from the API and takes precedence
+  # over this buffer when present.
+  assumed_shipping_eur: 3.50
+
+# ─────────────────────────────────────────────────────────────────────────
 # telegram — delivery semantics (NFR-I6)
 # ─────────────────────────────────────────────────────────────────────────
 telegram:

@@ -44,6 +44,7 @@ from salvager.domain.errors import BuyFailureReason
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 from salvager.domain.phase2_audit import Phase2StateSnapshot
+from salvager.domain.pricing import buyer_total_eur
 from salvager.domain.wishlist import (
     Phase2Settings,
     WishlistEntry,
@@ -69,9 +70,13 @@ from salvager.orchestration.reconciler import Reconciler
 _FIXED_ALERT_ID = UUID("12345678-1234-1234-1234-123456789abc")
 _FIXED_TS = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
 _ENTRY_KEY = ("Western Digital", "WD Red Plus 4TB", "WD40EFPX")
-_MAX_PRICE = Decimal("60.00")
+# Ceiling sits above the delivered buyer total of the 55 € default listing
+# (item + shipping buffer + Wallapop Protección ≈ 63 €) so the buy gate passes
+# — that headroom is exactly what shipping-aware-pricing is about.
+_MAX_PRICE = Decimal("70.00")
 _TOL_EUR = Decimal("1.00")
 _TOL_PCT = Decimal("2.0")
+_ASSUMED_SHIPPING = Decimal("3.50")
 
 
 def _listing(**overrides: Any) -> Listing:
@@ -88,6 +93,12 @@ def _listing(**overrides: Any) -> Listing:
     }
     base.update(overrides)
     return Listing(**base)
+
+
+# The delivered total the buyer pays for the default listing (item + shipping
+# buffer + Wallapop Protección) — what the marketplace charges and therefore
+# what a clean receipt reconciles against (shipping-aware-pricing).
+_DELIVERED_TOTAL = buyer_total_eur(_listing(), assumed_shipping_eur=_ASSUMED_SHIPPING)
 
 
 def _evaluation(**overrides: Any) -> ListingEvaluation:
@@ -124,7 +135,7 @@ def _entry(*, phase2_enabled: bool = True, max_price: Decimal | None = _MAX_PRIC
         model=_ENTRY_KEY[1],
         ref=_ENTRY_KEY[2],
         type="hdd",
-        max_price_solo=Decimal("60.00"),
+        max_price_solo=Decimal("70.00"),
         keywords=["wd red 4tb"],
         confidence_threshold="high",
         phase2=Phase2Settings(enabled=phase2_enabled, max_price_eur=max_price),
@@ -276,6 +287,7 @@ def _wire(
         cross_source_fetcher=cross_source,  # type: ignore[arg-type]
         tolerance_eur=_TOL_EUR,
         tolerance_pct=_TOL_PCT,
+        assumed_shipping_eur=_ASSUMED_SHIPPING,
     )
     circuit = CircuitBreaker(
         audit_writer=audit_writer,
@@ -336,7 +348,7 @@ async def test_scenario_1_happy_path(migrated_db: Path) -> None:
     wired = _wire(migrated_db)
     wired.cross_source.next_listing = _listing(price_eur=Decimal("55.00"))
     wired.browser.next_result = BuySuccess(
-        price_paid_eur=Decimal("55.00"),
+        price_paid_eur=_DELIVERED_TOTAL,
         payment_method="wallapop_pay",
         receipt_id="WP-2026-0001",
         screenshot_url="/app/data/screenshots/WP-2026-0001.png",
@@ -656,7 +668,7 @@ async def test_snapshot_without_phase2_max_price_falls_back_to_entry_ceiling(
     wired = _wire(migrated_db, snapshot=snapshot)
     wired.cross_source.next_listing = _listing(price_eur=Decimal("55.00"))
     wired.browser.next_result = BuySuccess(
-        price_paid_eur=Decimal("55.00"),
+        price_paid_eur=_DELIVERED_TOTAL,
         payment_method="wallapop_pay",
         receipt_id="WP-2026-0099",
         screenshot_url="/app/data/screenshots/WP-2026-0099.png",
@@ -668,8 +680,8 @@ async def test_snapshot_without_phase2_max_price_falls_back_to_entry_ceiling(
         await wired.audit_writer.close()
 
     assert isinstance(outcome, BuyOutcomeSuccess)
-    # The entry's phase2.max_price_eur (60€) was used as the ceiling.
-    assert wired.browser.calls == [(str(_listing().url), Decimal("60.00"))]
+    # The entry's phase2.max_price_eur (70€) was used as the ceiling.
+    assert wired.browser.calls == [(str(_listing().url), Decimal("70.00"))]
 
 
 async def test_callback_data_with_wrong_part_count_returns_aborted(
@@ -704,7 +716,7 @@ async def test_telegram_dispatch_failure_is_swallowed_outcome_still_returned(
     wired = _wire(migrated_db)
     wired.cross_source.next_listing = _listing(price_eur=Decimal("55.00"))
     wired.browser.next_result = BuySuccess(
-        price_paid_eur=Decimal("55.00"),
+        price_paid_eur=_DELIVERED_TOTAL,
         payment_method="wallapop_pay",
         receipt_id="WP-2026-0050",
         screenshot_url="/app/data/screenshots/WP-2026-0050.png",

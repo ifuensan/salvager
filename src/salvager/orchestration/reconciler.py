@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from salvager.domain.pricing import buyer_total_eur
 from salvager.domain.reconciliation import (
     ReconciliationResult,
     compute_tolerance,
@@ -56,6 +57,11 @@ class Reconciler:
     cross_source_fetcher: PageFetcher
     tolerance_eur: Decimal
     tolerance_pct: Decimal
+    #: Buffer for a listing's shipping when the marketplace didn't expose it,
+    #: so the expected receipt total is computed like-for-like against the
+    #: charged total (shipping-aware-pricing). Composer wires
+    #: ``config.pricing.assumed_shipping_eur``.
+    assumed_shipping_eur: Decimal
 
     async def reconcile_cross_source(self, listing: Listing) -> CrossSourceOutcome:
         """Re-fetch ``listing`` via the alternate path and compare prices.
@@ -83,13 +89,23 @@ class Reconciler:
         alert_snapshot: AlertSnapshot,
         transaction: TransactionRecord,
     ) -> ReconciliationResult:
-        """Compare the alert-time price to the receipt price.
+        """Compare the expected buyer total to the receipt total.
+
+        The marketplace charges the *delivered* total (item + shipping +
+        any Protección fee), so we compare it against the expected buyer
+        total — not the bare item price — or shipping/fees that were always
+        part of the cost would spuriously trip the safety check
+        (shipping-aware-pricing). The item-price delta stays available to
+        the caller via ``alert_snapshot.listing.price_eur`` for the audit ctx.
 
         Synchronous: both values are already in hand by the time the
         buy orchestrator calls this, and there is no IO to do.
         """
+        expected_total = buyer_total_eur(
+            alert_snapshot.listing, assumed_shipping_eur=self.assumed_shipping_eur
+        )
         return compute_tolerance(
-            alert_snapshot.listing.price_eur,
+            expected_total,
             transaction.price_paid_eur,
             tolerance_eur=self.tolerance_eur,
             tolerance_pct=self.tolerance_pct,

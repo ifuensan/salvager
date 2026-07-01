@@ -193,6 +193,10 @@ async def test_search_returns_domain_listings(tmp_path: Path) -> None:
     assert first.url == "https://es.wallapop.com/item/wd-red-plus-4tb-abc123"
     assert first.title == "WD Red Plus 4TB"
     assert first.price_eur == Decimal("55.00")
+    # The search API doesn't expose a fixed shipping cost → None (unknown), so
+    # the buyer total falls back to the configurable buffer (shipping-aware-
+    # pricing). Never silently 0.
+    assert first.shipping_eur is None
     assert first.location == "Madrid"
     # Prefers `big` size from images[].urls; falls back to medium/small.
     assert first.photo_urls == ["https://cdn.wallapop.com/abc123-W800.jpg"]

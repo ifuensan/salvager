@@ -39,6 +39,16 @@ class EbayApiSeller(BaseModel):
     feedbackScore: int | None = None
 
 
+class EbayApiShippingOption(BaseModel):
+    """One shipping option from a Browse item summary. ``shippingCost`` is
+    absent for some options (e.g. local pickup); we read the cheapest priced
+    one when projecting onto ``Listing.shipping_eur``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    shippingCost: EbayApiPrice | None = None
+
+
 class EbayApiItem(BaseModel):
     """One result row from ``buy/browse/v1/item_summary/search``."""
 
@@ -53,6 +63,7 @@ class EbayApiItem(BaseModel):
     itemWebUrl: str | None = None
     seller: EbayApiSeller | None = None
     itemCreationDate: str | None = None
+    shippingOptions: list[EbayApiShippingOption] = Field(default_factory=list)
 
 
 class EbayApiSearchResponse(BaseModel):

@@ -297,6 +297,12 @@ def _item_to_listing(item: WallapopApiItem) -> Listing:
         title=item.title,
         description=item.description,
         price_eur=Decimal(str(item.price.amount)),
+        # Wallapop's search/section API does not expose a fixed shipping cost
+        # (it's computed at checkout from the buyer's address + package weight),
+        # so shipping_eur stays None (unknown) → the buyer-total uses the
+        # configurable buffer + the deterministic Protección Wallapop fee. See
+        # salvager.domain.pricing.
+        shipping_eur=None,
         location=item.location.city if item.location else None,
         photo_urls=[url for url in (item.preferred_photo_url(),) if url is not None],
         seller_id=item.user_id,

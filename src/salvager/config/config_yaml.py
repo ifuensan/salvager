@@ -104,6 +104,20 @@ class WallapopConfig(BaseModel):
     longitude: Annotated[float, Field(ge=-180.0, le=180.0)] = -3.7038
 
 
+class PricingConfig(BaseModel):
+    """Shipping-aware pricing knobs (shipping-aware-pricing).
+
+    Price ceilings compare the buyer-paid total (item + shipping + any
+    marketplace fee). When a listing's shipping isn't exposed by the
+    marketplace, ``assumed_shipping_eur`` is used as a conservative buffer so
+    unknown shipping is never treated as free. Default ≈ 3,50 € (light ≤2 kg
+    standard within Spain)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assumed_shipping_eur: Annotated[Decimal, Field(ge=0)] = Decimal("3.50")
+
+
 class LoggingConfig(BaseModel):
     """Structured-log threshold + output format (NFR-O1, NFR-O4).
 
@@ -159,6 +173,7 @@ class ConfigModel(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     ebay: EbayConfig = Field(default_factory=EbayConfig)
     wallapop: WallapopConfig = Field(default_factory=WallapopConfig)
+    pricing: PricingConfig = Field(default_factory=PricingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
