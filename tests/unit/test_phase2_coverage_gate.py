@@ -31,6 +31,14 @@ def _load_gate() -> ModuleType:
 _gate = _load_gate()
 
 
+@pytest.fixture(autouse=True)
+def _confine_repo_root_to_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the gate's repo-root confinement (Sonar S8707) at the test's tmp
+    dir so synthetic ``coverage.json`` reports written under ``tmp_path`` pass
+    the ``--report`` path validation."""
+    monkeypatch.setattr(_gate, "REPO_ROOT", tmp_path)
+
+
 def _coverage(pct_by_module: dict[str, float]) -> dict[str, object]:
     return {
         "files": {
