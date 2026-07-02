@@ -48,12 +48,21 @@ CRITICAL_MODULES: Final[tuple[str, ...]] = (
 
 
 def _load_coverage(report_path: Path) -> dict[str, object]:
-    if not report_path.is_file():
+    # ``report_path`` comes from a CLI arg (--report). Canonicalise it and
+    # confine it to the repo tree before reading, so a crafted argument can't
+    # pull a file from elsewhere on disk (Sonar pythonsecurity:S8707). REPO_ROOT
+    # derives from __file__, not from user input, so it is a trusted base.
+    resolved = report_path.resolve()
+    if not resolved.is_relative_to(REPO_ROOT):
+        raise SystemExit(
+            f"ERROR: coverage report path {resolved} is outside the repo root {REPO_ROOT}."
+        )
+    if not resolved.is_file():
         raise SystemExit(
             f"ERROR: coverage report not found at {report_path}. "
             "Run pytest with --cov-report=json first."
         )
-    return json.loads(report_path.read_text(encoding="utf-8"))
+    return json.loads(resolved.read_text(encoding="utf-8"))
 
 
 def _module_coverage_pct(file_entry: dict[str, object]) -> float | None:
