@@ -12,6 +12,62 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.3.3] — 2026-07-02
+
+Found during the burn-in with real money on the line: every price ceiling
+in the pipeline compared the **item price only**, so Phase 2 could autobuy
+a listing whose item price fit the ceiling but whose *delivered* cost
+(shipping, fees) blew past it — and alerts hid that cost from the operator.
+
+**Shipping-aware pricing — ceilings and reconciliation compare the buyer total (#30)**
+
+- New `domain/pricing.py`: `proteccion_wallapop_fee` (the mandatory buyer
+  fee Wallapop charges: 1,69 € fixed ≤ 13 €, else 0,69 € + 7,5 % of the
+  item price, capped ≈ 50 €) and `buyer_cost`/`buyer_total_eur` — the
+  delivered total the buyer actually pays: item + shipping + (Wallapop)
+  Protección. Totals round half-up to the cent.
+- `Listing` carries `shipping_eur` (non-negative; `None` = unknown, `0` =
+  free). The eBay fetcher parses `shippingOptions[].shippingCost` (cheapest
+  priced option); Wallapop's search API exposes no shipping cost, so it
+  stays `None` and the configurable buffer applies.
+- New config knob `pricing.assumed_shipping_eur` (default 3,50 €): the
+  buffer used when shipping is unknown — never silently treated as free.
+- Every ceiling now gates on the buyer total: the Phase 1 alert gate
+  (before the LLM eval, so over-ceiling listings cost nothing), a
+  post-fetch filter in the eBay adapter (on top of the item-level API
+  pre-filter), and the Phase 2 buy gate in the preflight.
+- Receipt-vs-alert reconciliation compares the expected buyer total
+  against the charged total like-for-like, so shipping/fees no longer
+  spuriously trip the FR32 safety check; the item-price delta stays in the
+  audit ctx. Cross-source reconciliation intentionally keeps comparing
+  item prices — it guards against parse drift between fetch paths, which
+  can legitimately disagree on shipping visibility.
+- Alerts show the full breakdown on a new `💶` row:
+  `item + envío [(est.)] [+ Protección] = total` — the operator sees the
+  real cost before tapping Comprar. (Alert output changed → adds one row
+  to the Story 5.17 re-audit scope.)
+- Composer now fails fast on missing marketplace credentials *before*
+  building the Phase 2 bundle, so no orphaned handles on that error path.
+
+**CI security hardening (#31)**
+
+- `scripts/phase2_coverage_gate.py` now canonicalises the `--report` path
+  and confines it to the repo tree before reading (SonarCloud
+  pythonsecurity:S8707). Pre-existing finding surfaced by main's wider
+  new-code window after #30 merged; no behaviour change for the CI
+  invocation.
+
+**Dependencies (#21)**
+
+- GitHub Actions bumps (Dependabot, SHA-pinned): `actions/checkout`
+  6.0.2 → 7.0.0, `astral-sh/setup-uv` 8.1.0 → 8.2.0.
+
+> **Operator note (post-deploy):** the interim Corsair burn-in ceiling
+> (80 → 55 €) that compensated for ignored shipping can be restored to
+> 80 € — the gates now account for shipping and the Protección fee.
+
+---
+
 ## [0.3.2] — 2026-06-16
 
 Phase 2 was un-armable in production — this release fixes the gap so the

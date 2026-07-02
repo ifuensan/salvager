@@ -36,7 +36,10 @@ def _confine_repo_root_to_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     """Point the gate's repo-root confinement (Sonar S8707) at the test's tmp
     dir so synthetic ``coverage.json`` reports written under ``tmp_path`` pass
     the ``--report`` path validation."""
-    monkeypatch.setattr(_gate, "REPO_ROOT", tmp_path)
+    # Resolve: the gate resolves the --report path before the containment
+    # check, and on some platforms the temp dir sits behind a symlink
+    # (e.g. macOS /var → /private/var).
+    monkeypatch.setattr(_gate, "REPO_ROOT", tmp_path.resolve())
 
 
 def _coverage(pct_by_module: dict[str, float]) -> dict[str, object]:
