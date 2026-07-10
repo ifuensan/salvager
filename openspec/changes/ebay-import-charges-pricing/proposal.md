@@ -8,7 +8,7 @@ The Browse API gives us no exact value at search time: `item_summary/search` `sh
 
 ## What Changes
 
-- `Listing` gains a `country` field (ISO 3166-1 alpha-2, `None` = unknown), populated by the eBay fetcher from `itemLocation.country` (already parsed into the API schema, currently dropped). Wallapop listings remain domestic (`ES` or `None`).
+- `Listing` gains a `country` field (ISO 3166-1 alpha-2, `None` = unknown), populated by the eBay fetcher from `itemLocation.country` (already parsed into the API schema, currently dropped). The Wallapop adapter always leaves `country` as `None` (domestic marketplace; unknown country adds no import component).
 - `domain/pricing.py::buyer_cost` adds an **import-charges component**: when the listing's country is known and outside the EU, add a configurable flat buffer `pricing.assumed_import_charges_eur` (default **3,63 €**), flagged as estimated. Unknown/missing country adds nothing (no false positives on Wallapop or country-less payloads).
 - The EU membership set lives in the domain as a documented constant (27 member states).
 - The buffered total flows through every existing buyer-total consumer unchanged (they already call `buyer_total_eur`): eBay post-fetch ceiling filter, Phase 1 alert gate, Phase 2 buy gate, reconciler.
