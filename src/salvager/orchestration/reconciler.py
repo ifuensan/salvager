@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from salvager.domain.pricing import buyer_total_eur
+from salvager.domain.pricing import DEFAULT_ASSUMED_IMPORT_CHARGES_EUR, buyer_total_eur
 from salvager.domain.reconciliation import (
     ReconciliationResult,
     compute_tolerance,
@@ -62,6 +62,11 @@ class Reconciler:
     #: charged total (shipping-aware-pricing). Composer wires
     #: ``config.pricing.assumed_shipping_eur``.
     assumed_shipping_eur: Decimal
+    #: Estimated flat import charge for non-EU-located listings, so the
+    #: expected total matches a receipt that includes eBay's import fee
+    #: (ebay-import-charges-pricing). Composer wires
+    #: ``config.pricing.assumed_import_charges_eur``.
+    assumed_import_charges_eur: Decimal = DEFAULT_ASSUMED_IMPORT_CHARGES_EUR
 
     async def reconcile_cross_source(self, listing: Listing) -> CrossSourceOutcome:
         """Re-fetch ``listing`` via the alternate path and compare prices.
@@ -102,7 +107,9 @@ class Reconciler:
         buy orchestrator calls this, and there is no IO to do.
         """
         expected_total = buyer_total_eur(
-            alert_snapshot.listing, assumed_shipping_eur=self.assumed_shipping_eur
+            alert_snapshot.listing,
+            assumed_shipping_eur=self.assumed_shipping_eur,
+            assumed_import_charges_eur=self.assumed_import_charges_eur,
         )
         return compute_tolerance(
             expected_total,

@@ -26,7 +26,11 @@ from typing import Final
 
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
-from salvager.domain.pricing import DEFAULT_ASSUMED_SHIPPING_EUR, buyer_total_eur
+from salvager.domain.pricing import (
+    DEFAULT_ASSUMED_IMPORT_CHARGES_EUR,
+    DEFAULT_ASSUMED_SHIPPING_EUR,
+    buyer_total_eur,
+)
 from salvager.domain.wishlist import WishlistEntry
 from salvager.interfaces.phase2_state_reader import Phase2StateReader
 
@@ -66,6 +70,10 @@ class Phase2Preflight:
     #: it, so the buy ceiling is checked against the delivered total — never
     #: the bare item price. Composer passes ``config.pricing.assumed_shipping_eur``.
     assumed_shipping_eur: Decimal = DEFAULT_ASSUMED_SHIPPING_EUR
+    #: Estimated flat import charge added when the listing's item-location
+    #: country is outside the EU (ebay-import-charges-pricing). Composer
+    #: passes ``config.pricing.assumed_import_charges_eur``.
+    assumed_import_charges_eur: Decimal = DEFAULT_ASSUMED_IMPORT_CHARGES_EUR
     clock: Callable[[], datetime] = field(default=_utc_now)
 
     async def check(
@@ -89,7 +97,14 @@ class Phase2Preflight:
         # Gate on the delivered buyer total (item + shipping + Wallapop fee),
         # NOT the bare item price — otherwise shipping pushes the real cost
         # over the ceiling unnoticed (shipping-aware-pricing).
-        if buyer_total_eur(listing, assumed_shipping_eur=self.assumed_shipping_eur) > max_price:
+        if (
+            buyer_total_eur(
+                listing,
+                assumed_shipping_eur=self.assumed_shipping_eur,
+                assumed_import_charges_eur=self.assumed_import_charges_eur,
+            )
+            > max_price
+        ):
             return Phase2EligibilityResult(False, "phase2_max_price_below_listing")
         if _CONFIDENCE_RANK[evaluation.confidence] < _CONFIDENCE_RANK[entry.confidence_threshold]:
             return Phase2EligibilityResult(False, "confidence_below_threshold")

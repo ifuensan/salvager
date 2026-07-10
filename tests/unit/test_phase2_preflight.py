@@ -168,6 +168,27 @@ async def test_known_shipping_within_ceiling_is_eligible() -> None:
     assert result == Phase2EligibilityResult(eligible=True)
 
 
+async def test_non_eu_import_buffer_pushes_total_over_ceiling() -> None:
+    """Same eBay listing as the eligible case above, but located outside the
+    EU: the 3,63 € import buffer lifts 55 + 3 = 58 € to 61,63 € > 60 € →
+    ineligible (ebay-import-charges-pricing)."""
+    listing = _listing(price="55.00", marketplace="ebay", shipping_eur="3.00").model_copy(
+        update={"country": "CN"}
+    )
+    result = await _preflight(_state()).check(_entry(), listing, _evaluation())
+    assert result.reason == "phase2_max_price_below_listing"
+
+
+async def test_eu_country_gate_outcome_unchanged() -> None:
+    """An explicit EU country behaves exactly like the country-less case —
+    no import component enters the gate."""
+    listing = _listing(price="55.00", marketplace="ebay", shipping_eur="3.00").model_copy(
+        update={"country": "ES"}
+    )
+    result = await _preflight(_state()).check(_entry(), listing, _evaluation())
+    assert result == Phase2EligibilityResult(eligible=True)
+
+
 async def test_confidence_below_threshold_is_ineligible() -> None:
     # entry threshold is medium; an explicit low evaluation must fail.
     result = await _preflight(_state()).check(_entry(), _listing(), _evaluation(confidence="low"))

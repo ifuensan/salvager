@@ -111,11 +111,18 @@ class PricingConfig(BaseModel):
     marketplace fee). When a listing's shipping isn't exposed by the
     marketplace, ``assumed_shipping_eur`` is used as a conservative buffer so
     unknown shipping is never treated as free. Default ≈ 3,50 € (light ≤2 kg
-    standard within Spain)."""
+    standard within Spain).
+
+    ``assumed_import_charges_eur`` is added on top when a listing's
+    item-location country is known and outside the EU — eBay charges a flat
+    import fee on such items (operator-observed 3,63 €/item, 2026-07-07) that
+    the search API doesn't expose, so it is always an estimate
+    (ebay-import-charges-pricing)."""
 
     model_config = ConfigDict(extra="forbid")
 
     assumed_shipping_eur: Annotated[Decimal, Field(ge=0)] = Decimal("3.50")
+    assumed_import_charges_eur: Annotated[Decimal, Field(ge=0)] = Decimal("3.63")
 
 
 class LoggingConfig(BaseModel):

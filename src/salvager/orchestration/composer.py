@@ -494,9 +494,11 @@ def _build_ebay_job(
         app_id=env.EBAY_APP_ID,
         cert_id=env.EBAY_CERT_ID,
         quota=quota,
-        # Same shipping buffer as the Phase 1/Phase 2 gates so the post-fetch
-        # buyer-total filter doesn't drop listings the configured gate keeps.
+        # Same shipping/import buffers as the Phase 1/Phase 2 gates so the
+        # post-fetch buyer-total filter doesn't drop listings the configured
+        # gate keeps.
         assumed_shipping_eur=phase2_preflight.assumed_shipping_eur,
+        assumed_import_charges_eur=phase2_preflight.assumed_import_charges_eur,
     )
 
     async def _ebay_cycle() -> None:
@@ -631,6 +633,7 @@ def _build_buy_orchestrator(
         state_reader=state_reader,
         circuit_breaker_threshold=config.phase2.circuit_breaker_threshold,
         assumed_shipping_eur=config.pricing.assumed_shipping_eur,
+        assumed_import_charges_eur=config.pricing.assumed_import_charges_eur,
     )
     circuit_breaker = CircuitBreaker(
         audit_writer=audit_writer,
@@ -660,6 +663,7 @@ def _build_buy_orchestrator(
             cert_id=env.EBAY_CERT_ID,
             quota=ebay_quota,
             assumed_shipping_eur=config.pricing.assumed_shipping_eur,
+            assumed_import_charges_eur=config.pricing.assumed_import_charges_eur,
         )
         if ebay_tokens_path is not None and ebay_quota is not None
         else _UnavailableMarketplaceFetcher("ebay")
@@ -673,6 +677,7 @@ def _build_buy_orchestrator(
         tolerance_eur=config.phase2.reconciliation_tolerance_eur,
         tolerance_pct=config.phase2.reconciliation_tolerance_pct,
         assumed_shipping_eur=config.pricing.assumed_shipping_eur,
+        assumed_import_charges_eur=config.pricing.assumed_import_charges_eur,
     )
 
     # Both browser flows share the TinyFish API key — marketplace login

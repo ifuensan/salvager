@@ -262,17 +262,25 @@ def _deeplink_row(listing: Listing) -> str:
 def _cost_line(cost: BuyerCost) -> str:
     """Render the buyer-total breakdown row (shipping-aware-pricing).
 
-    ``💶 <item> + <shipping> envío[ (est.)][ + <fee> Protección] = <total> €``
-    so the operator sees the full delivered cost before tapping Comprar.
-    ``(est.)`` marks a buffer-estimated shipping; the Protección term shows
-    only on Wallapop (fee > 0). Plain prose → one escape pass.
+    ``💶 <item> + <shipping> envío[ (est.)][ + <fee> Protección]
+    [ + <import> importación (est.)] = <total> €`` so the operator sees the
+    full delivered cost before tapping Comprar. ``(est.)`` marks a
+    buffer-estimated component; the Protección term shows only on Wallapop
+    (fee > 0) and the importación term only for non-EU-located listings
+    (always estimated — ebay-import-charges-pricing). Plain prose → one
+    escape pass.
     """
     item = _format_amount_es(cost.item_eur)
     shipping = _format_amount_es(cost.shipping_eur)
     shipping_part = f"{shipping} envío (est.)" if cost.shipping_estimated else f"{shipping} envío"
     fee_part = f" + {_format_amount_es(cost.fee_eur)} Protección" if cost.fee_eur > 0 else ""
+    import_part = (
+        f" + {_format_amount_es(cost.import_charges_eur)} importación (est.)"
+        if cost.import_charges_eur > 0
+        else ""
+    )
     total = _format_price_es(cost.total_eur)
-    return escape_markdown_v2(f"💶 {item} + {shipping_part}{fee_part} = {total}")
+    return escape_markdown_v2(f"💶 {item} + {shipping_part}{fee_part}{import_part} = {total}")
 
 
 def _phase1_button_row(alert_id: str) -> list[InlineButton]:
