@@ -58,7 +58,12 @@ from salvager.domain.alert import (
 from salvager.domain.comps import CompSummary, summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing, Marketplace, SearchQuery
-from salvager.domain.pricing import DEFAULT_ASSUMED_SHIPPING_EUR, buyer_cost, buyer_total_eur
+from salvager.domain.pricing import (
+    DEFAULT_ASSUMED_IMPORT_CHARGES_EUR,
+    DEFAULT_ASSUMED_SHIPPING_EUR,
+    buyer_cost,
+    buyer_total_eur,
+)
 from salvager.domain.wishlist import Wishlist, WishlistEntry
 from salvager.interfaces.listing_evaluator import ListingEvaluator
 from salvager.interfaces.page_fetcher import PageFetcher
@@ -128,13 +133,19 @@ async def run_poll_cycle(
     summary = PollCycleSummary(marketplace=marketplace)
     semaphore = asyncio.Semaphore(max_concurrent_evaluations)
     now = clock()
-    # Shipping buffer for the buyer-total gate + alert breakdown. The preflight
-    # carries the config value (composer wires it); Phase 1-only daemons fall
-    # back to the documented default (shipping-aware-pricing).
+    # Shipping + import-charge buffers for the buyer-total gate + alert
+    # breakdown. The preflight carries the config values (composer wires
+    # them); Phase 1-only daemons fall back to the documented defaults
+    # (shipping-aware-pricing, ebay-import-charges-pricing).
     shipping_buffer = (
         phase2_preflight.assumed_shipping_eur
         if phase2_preflight is not None
         else DEFAULT_ASSUMED_SHIPPING_EUR
+    )
+    import_buffer = (
+        phase2_preflight.assumed_import_charges_eur
+        if phase2_preflight is not None
+        else DEFAULT_ASSUMED_IMPORT_CHARGES_EUR
     )
 
     for entry in wishlist.entries:
@@ -220,15 +231,17 @@ async def run_poll_cycle(
             await _record_reserved_as_seen(reserved, entry, store, summary, log)
 
         # Authoritative ceiling gate on the delivered buyer total (item +
-        # shipping + Wallapop Protección), applied before the LLM eval so an
-        # over-ceiling listing never costs an evaluation or reaches the alert
-        # path (shipping-aware-pricing).
+        # shipping + Wallapop Protección + non-EU import charge), applied
+        # before the LLM eval so an over-ceiling listing never costs an
+        # evaluation or reaches the alert path (shipping-aware-pricing,
+        # ebay-import-charges-pricing).
         buyable = await _filter_over_ceiling(
             buyable,
             entry,
             store,
             summary,
             assumed_shipping_eur=shipping_buffer,
+            assumed_import_charges_eur=import_buffer,
             marketplace=marketplace,
             log=log,
         )
@@ -350,6 +363,7 @@ async def _filter_over_ceiling(
     summary: PollCycleSummary,
     *,
     assumed_shipping_eur: Decimal,
+    assumed_import_charges_eur: Decimal,
     marketplace: Marketplace,
     log: object,
 ) -> list[Listing]:
@@ -367,7 +381,11 @@ async def _filter_over_ceiling(
         return buyable
     within: list[Listing] = []
     for listing in buyable:
-        total = buyer_total_eur(listing, assumed_shipping_eur=assumed_shipping_eur)
+        total = buyer_total_eur(
+            listing,
+            assumed_shipping_eur=assumed_shipping_eur,
+            assumed_import_charges_eur=assumed_import_charges_eur,
+        )
         if total <= ceiling:
             within.append(listing)
             continue
@@ -571,15 +589,25 @@ async def _dispatch_alert(
         rendered_at=clock(),
     )
 
-    # Buyer-total breakdown for the alert (item + shipping + Wallapop fee).
-    # The buffer for unknown shipping comes from the preflight (composer sets
-    # it from config); fall back to the default for Phase 1-only daemons.
+    # Buyer-total breakdown for the alert (item + shipping + Wallapop fee +
+    # non-EU import charge). The buffers come from the preflight (composer
+    # sets them from config); fall back to the defaults for Phase 1-only
+    # daemons.
     buffer = (
         phase2_preflight.assumed_shipping_eur
         if phase2_preflight is not None
         else DEFAULT_ASSUMED_SHIPPING_EUR
     )
-    cost = buyer_cost(listing, assumed_shipping_eur=buffer)
+    import_buffer = (
+        phase2_preflight.assumed_import_charges_eur
+        if phase2_preflight is not None
+        else DEFAULT_ASSUMED_IMPORT_CHARGES_EUR
+    )
+    cost = buyer_cost(
+        listing,
+        assumed_shipping_eur=buffer,
+        assumed_import_charges_eur=import_buffer,
+    )
 
     try:
         rendered = (

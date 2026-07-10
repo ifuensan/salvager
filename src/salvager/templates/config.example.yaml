@@ -76,6 +76,12 @@ pricing:
   # heavier items. eBay shipping is read from the API and takes precedence
   # over this buffer when present.
   assumed_shipping_eur: 3.50
+  # Estimated flat import charge (EUR) added when a listing's item-location
+  # country is outside the EU — eBay charges it on such items (observed
+  # 3,63 €/item, 2026-07-07) but the search API doesn't expose it, so the
+  # buyer total always uses this estimate (ebay-import-charges-pricing).
+  # Wallapop is domestic and never pays it. Set to 0 to disable.
+  assumed_import_charges_eur: 3.63
 
 # ─────────────────────────────────────────────────────────────────────────
 # telegram — delivery semantics (NFR-I6)

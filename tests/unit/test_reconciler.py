@@ -176,3 +176,26 @@ def test_receipt_mismatch_caught() -> None:
     )
     assert result.passed is False
     assert result.delta_eur == Decimal("8.00")
+
+
+def test_receipt_with_import_charges_does_not_trip_reconciliation() -> None:
+    """A non-EU eBay receipt includes the import charge; the expected total
+    carries the same buffer, so the like-for-like comparison passes
+    (ebay-import-charges-pricing)."""
+    fetcher = _ScriptedFetcher(response=_listing("0.00"))
+    reconciler = _reconciler(fetcher)
+    snapshot = _alert_snapshot("55.00")
+    non_eu = snapshot.listing.model_copy(
+        update={"marketplace": "ebay", "country": "CN", "shipping_eur": Decimal("0")}
+    )
+    snapshot = snapshot.model_copy(update={"listing": non_eu})
+    delivered = buyer_total_eur(
+        snapshot.listing,
+        assumed_shipping_eur=_ASSUMED_SHIPPING,
+        assumed_import_charges_eur=Decimal("3.63"),
+    )
+    assert delivered == Decimal("58.63")  # 55.00 + 0 shipping + 3.63 import
+
+    result = reconciler.reconcile_receipt_vs_alert(snapshot, _transaction(str(delivered)))
+    assert result.passed is True
+    assert result.delta_eur == Decimal("0.00")

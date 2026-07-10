@@ -983,6 +983,35 @@ async def test_listing_over_buyer_total_ceiling_is_dropped(
     assert drops[0]["ceiling_eur"] == "60.00"
 
 
+async def test_non_eu_listing_dropped_by_import_buffer() -> None:
+    """An eBay listing located outside the EU pays the estimated import
+    charge in the ceiling gate: 55 € item + 3,63 € import + 3,50 € shipping
+    buffer = 62,13 € > 60 € ceiling → dropped; the identical EU-located
+    listing stays (ebay-import-charges-pricing)."""
+    entry = _entry(max_price_solo=Decimal("60.00"))
+    non_eu = _listing("cn1", price=Decimal("55.00")).model_copy(
+        update={"marketplace": "ebay", "country": "CN"}
+    )
+    eu = _listing("es1", price=Decimal("55.00")).model_copy(
+        update={"marketplace": "ebay", "country": "ES"}
+    )
+    fetcher = _FakeFetcher(response=[non_eu, eu])
+    evaluator = _FakeEvaluator()
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "ebay",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.dropped_count == 1
+    assert ("cn1", entry.entry_key) in store.seen
+    # Only the EU copy reached the LLM eval.
+    assert [listing_id for listing_id, _ in evaluator.calls] == ["es1"]
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Adapter discipline — poll_loop stays pure
 # ─────────────────────────────────────────────────────────────────────────

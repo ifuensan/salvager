@@ -185,6 +185,45 @@ def test_cost_line_flags_estimated_shipping_and_omits_fee_on_ebay() -> None:
     assert "est" in cost_line  # (est.) flag — buffer applied
     assert "Protección" not in cost_line  # eBay has no Protección fee
     assert "73,50" in cost_line  # 70 + 3,50 buffer
+    assert "importación" not in cost_line  # country unknown → no import term
+
+
+def test_cost_line_shows_estimated_import_charges_for_non_eu_listing() -> None:
+    """A non-EU-located eBay listing renders the estimated import term and a
+    total that includes it (ebay-import-charges-pricing)."""
+    listing = _listing(
+        marketplace="ebay", price_eur=Decimal("91.80"), shipping_eur=Decimal("0")
+    ).model_copy(update={"country": "CN"})
+    cost = buyer_cost(
+        listing,
+        assumed_shipping_eur=Decimal("3.50"),
+        assumed_import_charges_eur=Decimal("3.63"),
+    )
+    rendered = render_phase1_listing_alert(_snapshot(listing=listing), buyer_cost=cost)
+
+    cost_line = next(line for line in rendered.text.split("\n") if line.startswith("💶"))
+    assert "importación" in cost_line
+    assert "3,63" in cost_line
+    assert "est" in cost_line  # the import value is always an estimate
+    assert "95,43" in cost_line  # 91,80 + 0 envío + 3,63 importación
+
+
+def test_cost_line_eu_listing_renders_without_import_term() -> None:
+    """An EU-located listing's breakdown is identical to the pre-change
+    render — no import component leaks in."""
+    listing = _listing(
+        marketplace="ebay", price_eur=Decimal("63.66"), shipping_eur=Decimal("16.82")
+    ).model_copy(update={"country": "DE"})
+    cost = buyer_cost(
+        listing,
+        assumed_shipping_eur=Decimal("3.50"),
+        assumed_import_charges_eur=Decimal("3.63"),
+    )
+    rendered = render_phase1_listing_alert(_snapshot(listing=listing), buyer_cost=cost)
+
+    cost_line = next(line for line in rendered.text.split("\n") if line.startswith("💶"))
+    assert "importación" not in cost_line
+    assert "80,48" in cost_line  # 63,66 + 16,82 — unchanged v0.3.3 total
 
 
 def test_cost_line_absent_when_no_buyer_cost_supplied() -> None:

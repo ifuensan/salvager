@@ -44,7 +44,11 @@ from salvager.domain.errors import (
     EbaySchemaDrift,
 )
 from salvager.domain.listing import Listing, SearchQuery
-from salvager.domain.pricing import DEFAULT_ASSUMED_SHIPPING_EUR, buyer_total_eur
+from salvager.domain.pricing import (
+    DEFAULT_ASSUMED_IMPORT_CHARGES_EUR,
+    DEFAULT_ASSUMED_SHIPPING_EUR,
+    buyer_total_eur,
+)
 from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.observability.logging import get_logger
 
@@ -66,6 +70,7 @@ class EbayApiFetcher(PageFetcher):
         *,
         quota: DailyQuotaTracker,
         assumed_shipping_eur: Decimal = DEFAULT_ASSUMED_SHIPPING_EUR,
+        assumed_import_charges_eur: Decimal = DEFAULT_ASSUMED_IMPORT_CHARGES_EUR,
         base_url: str = _DEFAULT_BASE_URL,
         marketplace_header: str = _DEFAULT_MARKETPLACE_HEADER,
         client: httpx.AsyncClient | None = None,
@@ -76,11 +81,13 @@ class EbayApiFetcher(PageFetcher):
         self._app_id = app_id
         self._cert_id = cert_id
         self._quota = quota
-        # Buffer for the post-fetch buyer-total filter when an item exposes no
-        # shipping. Composer threads ``config.pricing.assumed_shipping_eur`` so
-        # this matches the Phase 1/Phase 2 gates; defaults to the documented
-        # buffer for CLI/test construction (shipping-aware-pricing).
+        # Buffers for the post-fetch buyer-total filter: unknown shipping and
+        # the non-EU import charge. Composer threads the ``config.pricing``
+        # values so this matches the Phase 1/Phase 2 gates; defaults cover
+        # CLI/test construction (shipping-aware-pricing,
+        # ebay-import-charges-pricing).
         self._assumed_shipping_eur = assumed_shipping_eur
+        self._assumed_import_charges_eur = assumed_import_charges_eur
         self._marketplace_header = marketplace_header
         self._owned_client = client is None
         if client is None:
@@ -148,7 +155,11 @@ class EbayApiFetcher(PageFetcher):
             listings = [
                 listing
                 for listing in listings
-                if buyer_total_eur(listing, assumed_shipping_eur=self._assumed_shipping_eur)
+                if buyer_total_eur(
+                    listing,
+                    assumed_shipping_eur=self._assumed_shipping_eur,
+                    assumed_import_charges_eur=self._assumed_import_charges_eur,
+                )
                 <= ceiling
             ]
 
@@ -306,6 +317,11 @@ def _item_to_listing(item: EbayApiItem) -> Listing:
         description=item.shortDescription,
         price_eur=Decimal(str(item.price.value)),
         shipping_eur=_cheapest_shipping_eur(item),
+        country=(
+            item.itemLocation.country.upper()
+            if item.itemLocation and item.itemLocation.country
+            else None
+        ),
         location=item.itemLocation.city if item.itemLocation else None,
         photo_urls=photo_urls,
         seller_id=item.seller.username if item.seller else None,

@@ -23,6 +23,7 @@ from salvager.adapters.ebay_api import (
 from salvager.adapters.ebay_api.fetcher import _item_to_listing
 from salvager.adapters.ebay_api.schema import (
     EbayApiItem,
+    EbayApiLocation,
     EbayApiPrice,
     EbayApiShippingOption,
 )
@@ -498,3 +499,47 @@ def test_item_to_listing_parses_cheapest_shipping() -> None:
 
 def test_item_to_listing_shipping_none_when_no_priced_option() -> None:
     assert _item_to_listing(_ebay_item()).shipping_eur is None
+
+
+def test_item_to_listing_projects_country_uppercased() -> None:
+    item = _ebay_item(itemLocation=EbayApiLocation(city="Shenzhen", country="cn"))
+    listing = _item_to_listing(item)
+    assert listing.country == "CN"
+    assert listing.location == "Shenzhen"
+
+
+def test_item_to_listing_country_none_when_location_missing() -> None:
+    assert _item_to_listing(_ebay_item()).country is None
+    assert _item_to_listing(_ebay_item(itemLocation=EbayApiLocation(city="Madrid"))).country is None
+
+
+@pytest.mark.asyncio
+async def test_post_fetch_filter_applies_import_buffer_to_non_eu_items(tmp_path: Path) -> None:
+    """Identical price/shipping, only the item-location country differs: the
+    non-EU copy pays the import buffer and drops over the ceiling; the EU
+    copy stays (ebay-import-charges-pricing)."""
+    item = {
+        "title": "Corsair",
+        "price": {"value": "58.00", "currency": "EUR"},
+        "shippingOptions": [{"shippingCost": {"value": "0.00", "currency": "EUR"}}],
+    }
+    payload = {
+        "itemSummaries": [
+            {**item, "itemId": "v1|cn|0", "itemLocation": {"country": "CN"}},
+            {**item, "itemId": "v1|es|0", "itemLocation": {"country": "ES"}},
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    # Ceiling 60: EU copy totals 58.00; non-EU copy 58.00 + 3.63 = 61.63 → dropped.
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listings = await fetcher.search(
+            SearchQuery(keyword="x", marketplace="ebay", max_price_eur=Decimal("60.00"))
+        )
+    finally:
+        await fetcher.aclose()
+
+    assert [listing.listing_id for listing in listings] == ["v1|es|0"]

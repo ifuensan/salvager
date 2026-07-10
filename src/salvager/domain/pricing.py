@@ -8,7 +8,12 @@ Wallapop the buyer always pays, on top of the item:
     buffer for the unknown case), and
   - the mandatory **Protección Wallapop** fee.
 
-eBay carries shipping (from the API) but no Protección fee.
+eBay carries shipping (from the API) but no Protección fee. eBay also
+charges a flat import fee on items shipped into Spain from outside the EU
+(operator-observed 3,63 €/item, 2026-07-07); the Browse API search response
+does not expose it, so a configurable flat buffer is added whenever the
+listing's item-location country is known and outside the EU
+(ebay-import-charges-pricing).
 
 Protección Wallapop fee (operator-sourced 2026-06-16; calculator at
 https://gualacost.com/ — approximate, Wallapop can change it):
@@ -35,6 +40,48 @@ _CENT: Final[Decimal] = Decimal("0.01")
 #: ``pricing.assumed_shipping_eur`` overrides it in production; this is the
 #: fallback for code paths without config (e.g. Phase 1-only / tests).
 DEFAULT_ASSUMED_SHIPPING_EUR: Final[Decimal] = Decimal("3.50")
+
+#: Default import-charges buffer (EUR) for a listing located outside the EU —
+#: eBay's flat import fee as observed by the operator (3,63 €/item,
+#: 2026-07-07; not exposed by the search API, so always estimated). Config
+#: ``pricing.assumed_import_charges_eur`` overrides it in production.
+DEFAULT_ASSUMED_IMPORT_CHARGES_EUR: Final[Decimal] = Decimal("3.63")
+
+#: EU member states (ISO 3166-1 alpha-2), as of 2026-07 — the 27 post-Brexit
+#: members. A listing located outside this set pays eBay's import charge; GB
+#: is deliberately absent. Membership changes are rare enough to be a code
+#: change, not config.
+EU_COUNTRY_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "AT",
+        "BE",
+        "BG",
+        "CY",
+        "CZ",
+        "DE",
+        "DK",
+        "EE",
+        "ES",
+        "FI",
+        "FR",
+        "GR",
+        "HR",
+        "HU",
+        "IE",
+        "IT",
+        "LT",
+        "LU",
+        "LV",
+        "MT",
+        "NL",
+        "PL",
+        "PT",
+        "RO",
+        "SE",
+        "SI",
+        "SK",
+    }
+)
 
 # Protección Wallapop fee schedule. Constants in one place; see module
 # docstring for the source + date. A unit test pins the boundaries so a wrong
@@ -69,16 +116,27 @@ class BuyerCost:
     shipping_eur: Decimal  # value used: parsed cost, or the buffer when estimated
     shipping_estimated: bool  # True when the configurable buffer was applied
     fee_eur: Decimal  # Protección Wallapop (0 on eBay)
+    import_charges_eur: Decimal  # non-EU import buffer (0 when not applied)
+    import_estimated: bool  # True whenever non-zero — the value is never parsed
     total_eur: Decimal
 
 
-def buyer_cost(listing: Listing, *, assumed_shipping_eur: Decimal) -> BuyerCost:
+def buyer_cost(
+    listing: Listing,
+    *,
+    assumed_shipping_eur: Decimal,
+    assumed_import_charges_eur: Decimal = DEFAULT_ASSUMED_IMPORT_CHARGES_EUR,
+) -> BuyerCost:
     """Compute the buyer total for ``listing``.
 
     Shipping is the parsed ``listing.shipping_eur`` when known, else the
     configurable ``assumed_shipping_eur`` buffer (flagged ``estimated``) — it
     is never silently treated as zero. The Protección Wallapop fee is added
-    for Wallapop listings only.
+    for Wallapop listings only. When ``listing.country`` is known and outside
+    :data:`EU_COUNTRY_CODES`, the ``assumed_import_charges_eur`` buffer is
+    added (always flagged estimated — search payloads never carry the value);
+    an unknown country adds nothing, so domestic/Wallapop listings are never
+    taxed by mistake.
     """
     if listing.shipping_eur is not None:
         shipping = listing.shipping_eur
@@ -88,23 +146,38 @@ def buyer_cost(listing: Listing, *, assumed_shipping_eur: Decimal) -> BuyerCost:
         estimated = True
 
     fee = proteccion_wallapop_fee(listing.price_eur) if listing.marketplace == "wallapop" else _ZERO
-    total = _money(listing.price_eur + shipping + fee)
+    non_eu = listing.country is not None and listing.country not in EU_COUNTRY_CODES
+    import_charges = assumed_import_charges_eur if non_eu else _ZERO
+    total = _money(listing.price_eur + shipping + fee + import_charges)
     return BuyerCost(
         item_eur=listing.price_eur,
         shipping_eur=shipping,
         shipping_estimated=estimated,
         fee_eur=fee,
+        import_charges_eur=import_charges,
+        import_estimated=import_charges > 0,
         total_eur=total,
     )
 
 
-def buyer_total_eur(listing: Listing, *, assumed_shipping_eur: Decimal) -> Decimal:
+def buyer_total_eur(
+    listing: Listing,
+    *,
+    assumed_shipping_eur: Decimal,
+    assumed_import_charges_eur: Decimal = DEFAULT_ASSUMED_IMPORT_CHARGES_EUR,
+) -> Decimal:
     """Convenience: the delivered total only (see :func:`buyer_cost`)."""
-    return buyer_cost(listing, assumed_shipping_eur=assumed_shipping_eur).total_eur
+    return buyer_cost(
+        listing,
+        assumed_shipping_eur=assumed_shipping_eur,
+        assumed_import_charges_eur=assumed_import_charges_eur,
+    ).total_eur
 
 
 __all__ = [
+    "DEFAULT_ASSUMED_IMPORT_CHARGES_EUR",
     "DEFAULT_ASSUMED_SHIPPING_EUR",
+    "EU_COUNTRY_CODES",
     "BuyerCost",
     "buyer_cost",
     "buyer_total_eur",

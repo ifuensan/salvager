@@ -7,8 +7,33 @@ NFR-M4.
 
 ## [Unreleased]
 
-Nothing on the wire today. Post-v1 work is described in
-[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
+eBay started charging a flat import fee on items shipped into Spain from
+outside the EU (operator-observed 3,63 €/item, 2026-07-07). The buyer-total
+pipeline shipped in 0.3.3 summed item + shipping only, so non-EU listings
+under-estimated the real delivered cost — the same class of real-money risk
+shipping-aware pricing fixed.
+
+**Import-charges-aware pricing — non-EU eBay listings carry an estimated import buffer**
+
+- `Listing` gains `country` (ISO 3166-1 alpha-2; the eBay fetcher projects
+  `itemLocation.country`, Wallapop stays `None`). When the country is known
+  and outside the EU-27, `buyer_cost` adds a configurable flat buffer to the
+  delivered total — the Browse API search response doesn't expose the real
+  charge (verified live: `shippingOptions` carry only `shippingCost`), so
+  the component is always marked estimated.
+- New config knob `pricing.assumed_import_charges_eur` (default 3,63 €;
+  `0` disables). Unknown country adds nothing, so Wallapop/domestic totals
+  are byte-identical to 0.3.3.
+- The buffer flows through every buyer-total consumer: the eBay post-fetch
+  filter, the Phase 1 alert gate, the Phase 2 buy gate, and receipt
+  reconciliation. Alerts append `+ 3,63 importación (est.)` to the 💶
+  breakdown row only when it applies.
+- **Behaviour shift:** non-EU eBay listings that previously alerted within
+  3,63 € of a ceiling now drop — quieter eBay cycles are expected, and
+  intended.
+
+Post-v1 work is described in [ROADMAP.md](ROADMAP.md) under
+"Post-launch (deferred)".
 
 ---
 

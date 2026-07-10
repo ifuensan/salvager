@@ -17,6 +17,7 @@ from salvager.config.config_yaml import (
     LoggingConfig,
     PathsConfig,
     Phase2Config,
+    PricingConfig,
     ScheduleConfig,
     TelegramConfig,
     load_config,
@@ -63,6 +64,24 @@ def test_telegram_defaults_match_example() -> None:
 def test_ebay_defaults_match_example() -> None:
     e = EbayConfig()
     assert e.daily_request_quota == 5000
+
+
+def test_pricing_defaults_match_example() -> None:
+    p = PricingConfig()
+    assert p.assumed_shipping_eur == Decimal("3.50")
+    assert p.assumed_import_charges_eur == Decimal("3.63")
+
+
+def test_pricing_import_charges_yaml_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("pricing:\n  assumed_import_charges_eur: 4.20\n", encoding="utf-8")
+    config = load_config(path)
+    assert config.pricing.assumed_import_charges_eur == Decimal("4.20")
+
+
+def test_pricing_import_charges_rejects_negative() -> None:
+    with pytest.raises(ValidationError):
+        PricingConfig(assumed_import_charges_eur=Decimal("-0.01"))
 
 
 def test_logging_defaults_match_example() -> None:
