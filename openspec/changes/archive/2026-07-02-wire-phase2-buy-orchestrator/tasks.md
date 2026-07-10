@@ -33,7 +33,7 @@
 - [x] 5.1 Composer test extended in `tests/unit/test_composer.py` — asserts `composed.dispatcher._buy_orchestrator` is a `BuyOrchestrator` with all 9 typed fields populated and the right reuse of `telegram`/`store`.
 - [x] 5.2 Marketplace dispatch tests done in task 2.3.
 - [x] 5.3 WishlistLoader test done in task 3.3.
-- [ ] 5.4 SKIP — dispatcher routing for `verb="buy"` is already covered in `tests/unit/test_callback_handler.py` (predates this change); the only delta here is that `_buy_orchestrator` is now non-None, which the composer test covers. Adding another e2e test would be redundant.
+- [x] 5.4 SKIP — dispatcher routing for `verb="buy"` is already covered in `tests/unit/test_callback_handler.py` (predates this change); the only delta here is that `_buy_orchestrator` is now non-None, which the composer test covers. Adding another e2e test would be redundant.
 - [x] 5.5 Negative test `test_both_credentials_missing_raises` already exists in `test_composer.py:145` — passes unchanged, confirming no regression.
 
 ## 6. Documentation
