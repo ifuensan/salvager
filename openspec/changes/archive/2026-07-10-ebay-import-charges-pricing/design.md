@@ -33,7 +33,7 @@ Operator decision: estimated flat buffer, not detail calls, not exclusion.
 
 2. **`Listing.country: str | None`** (ISO 3166-1 alpha-2, uppercased; `None` = unknown). Projected from eBay `itemLocation.country`; the Wallapop fetcher leaves it `None`. We do NOT overload the human-readable `location` city string — gates need a machine-comparable code.
 
-3. **EU membership as a domain constant** `EU_COUNTRY_CODES` (frozenset, the 27 member states, documented with an as-of date). GB is non-EU (post-Brexit) — correct: UK-shipped items do incur the charge. Kept in `domain/pricing.py` next to its only consumer; no config surface (membership changes are rare enough to be a code change).
+3. **EU membership as a domain constant** `EU_COUNTRY_CODES` (frozenset, the 27 member states, documented with an as-of date). GB is treated as non-EU (post-Brexit), so UK-shipped items are eligible for the conservative estimated buffer. Kept in `domain/pricing.py` next to its only consumer; no config surface (membership changes are rare enough to be a code change).
 
 4. **Unknown country ⇒ no buffer.** Opposite polarity to the shipping buffer (unknown shipping ⇒ assume cost). Rationale: Wallapop listings and any country-less payload are overwhelmingly domestic; taxing them 3,63 € would silently drop in-ceiling domestic bargains. eBay's `itemLocation.country` is in practice always present, so the escape window is negligible. The estimated flag on the component makes the alert honest either way.
 
