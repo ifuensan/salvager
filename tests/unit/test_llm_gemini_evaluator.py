@@ -346,6 +346,21 @@ def test_default_model_is_not_the_retired_flavour() -> None:
     assert _DEFAULT_MODEL == "gemini-2.5-flash"
 
 
+def test_thinking_toggle_gated_to_the_25_flash_family() -> None:
+    """thinking_budget=0 is only valid on 2.5 Flash/Flash-Lite: 2.5 Pro
+    rejects it (400) and pre-2.5 models take no ThinkingConfig. The default
+    model must be in the supported set."""
+    from salvager.adapters.llm_gemini.evaluator import (
+        _DEFAULT_MODEL,
+        _supports_thinking_toggle,
+    )
+
+    assert _supports_thinking_toggle(_DEFAULT_MODEL)
+    assert _supports_thinking_toggle("gemini-2.5-flash-lite")
+    assert not _supports_thinking_toggle("gemini-2.5-pro")
+    assert not _supports_thinking_toggle("gemini-1.5-flash")
+
+
 @pytest.mark.asyncio
 async def test_rate_limit_exception_propagates() -> None:
     """LlmRateLimited surfaces unchanged from the call — orchestration

@@ -57,6 +57,17 @@ GeminiCallable = Callable[[str], Awaitable[str]]
 # add cost + latency.
 _DEFAULT_MODEL = "gemini-2.5-flash"
 
+#: Models whose thinking can be turned off with ``thinking_budget=0``.
+#: 2.5 Pro rejects a zero budget (400 INVALID_ARGUMENT) and pre-2.5 models
+#: don't take a ThinkingConfig at all, so the toggle is applied only to the
+#: 2.5 Flash family (flash + flash-lite).
+_THINKING_TOGGLE_PREFIX = "gemini-2.5-flash"
+
+
+def _supports_thinking_toggle(model: str) -> bool:
+    """True iff ``model`` accepts ``thinking_budget=0`` (2.5 Flash family)."""
+    return model.startswith(_THINKING_TOGGLE_PREFIX)
+
 
 class GeminiFlashEvaluator(ListingEvaluator):
     """LLM-backed match judge — Gemini Flash by default, swappable per NFR-I3."""
@@ -136,9 +147,15 @@ def _build_default_call(api_key: str, model: str) -> GeminiCallable:
 
     client = genai.Client(api_key=api_key)
     # Classification workload: disable 2.5-flash's thinking so each eval
-    # costs/behaves like the retired 2.0-flash (0 reasoning tokens).
-    config = genai_types.GenerateContentConfig(
-        thinking_config=genai_types.ThinkingConfig(thinking_budget=0)
+    # costs/behaves like the retired 2.0-flash (0 reasoning tokens). Only
+    # the 2.5 Flash family accepts a zero budget — other model overrides
+    # get no ThinkingConfig rather than a 400 at call time.
+    config = (
+        genai_types.GenerateContentConfig(
+            thinking_config=genai_types.ThinkingConfig(thinking_budget=0)
+        )
+        if _supports_thinking_toggle(model)
+        else None
     )
 
     async def _call(prompt: str) -> str:
