@@ -7,13 +7,20 @@ NFR-M4.
 
 ## [Unreleased]
 
+Nothing on the wire today. Post-v1 work is described in
+[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
+
+---
+
+## [0.3.4] — 2026-07-11
+
 eBay started charging a flat import fee on items shipped into Spain from
 outside the EU (operator-observed 3,63 €/item, 2026-07-07). The buyer-total
 pipeline shipped in 0.3.3 summed item + shipping only, so non-EU listings
 under-estimated the real delivered cost — the same class of real-money risk
 shipping-aware pricing fixed.
 
-**Import-charges-aware pricing — non-EU eBay listings carry an estimated import buffer**
+**Import-charges-aware pricing — non-EU eBay listings carry an estimated import buffer (#35)**
 
 - `Listing` gains `country` (ISO 3166-1 alpha-2; the eBay fetcher projects
   `itemLocation.country`, Wallapop stays `None`). When the country is known
@@ -31,9 +38,10 @@ shipping-aware pricing fixed.
 - **Behaviour shift:** non-EU eBay listings that previously alerted within
   3,63 € of a ceiling now drop — quieter eBay cycles are expected, and
   intended.
-
-Post-v1 work is described in [ROADMAP.md](ROADMAP.md) under
-"Post-launch (deferred)".
+- OpenSpec: change `ebay-import-charges-pricing` archived and its delta
+  synced into `openspec/specs/shipping-aware-pricing/spec.md` (#36); the
+  three v0.3.3-era changes archived with the first consolidated specs
+  under `openspec/specs/` (#34).
 
 ---
 
@@ -518,8 +526,13 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.3.4...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.3.4]: https://github.com/ifuensan/salvager/releases/tag/v0.3.4
+[0.3.3]: https://github.com/ifuensan/salvager/releases/tag/v0.3.3
+[0.3.2]: https://github.com/ifuensan/salvager/releases/tag/v0.3.2
+[0.3.1]: https://github.com/ifuensan/salvager/releases/tag/v0.3.1
+[0.3.0]: https://github.com/ifuensan/salvager/releases/tag/v0.3.0
 [0.2.3]: https://github.com/ifuensan/salvager/releases/tag/v0.2.3
 [0.2.2]: https://github.com/ifuensan/salvager/releases/tag/v0.2.2
 [0.2.1]: https://github.com/ifuensan/salvager/releases/tag/v0.2.1
