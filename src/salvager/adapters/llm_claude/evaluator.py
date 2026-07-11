@@ -25,8 +25,8 @@ from datetime import UTC, datetime
 from pydantic import SecretStr, ValidationError
 
 from salvager.adapters._llm_evaluator_shared import (
-    MAX_ONE_LINE_TAKE,
     budget_short_circuit_evaluation,
+    clip_one_line_take,
     exceeds_all_ceilings,
     extract_json_object,
 )
@@ -93,16 +93,11 @@ class ClaudeHaikuEvaluator(ListingEvaluator):
             )
             raise LlmEvaluationError(f"malformed Claude response: {raw[:200]}") from exc
 
-        if len(parsed.one_line_take) > MAX_ONE_LINE_TAKE:
-            raise LlmEvaluationError(
-                f"one_line_take too long ({len(parsed.one_line_take)} > {MAX_ONE_LINE_TAKE} chars)"
-            )
-
         return ListingEvaluation(
             listing_id=listing.listing_id,
             entry_key=entry.entry_key,
             confidence=parsed.confidence,
-            one_line_take=parsed.one_line_take,
+            one_line_take=clip_one_line_take(parsed.one_line_take),
             is_container=parsed.is_container,
             wrapper_text=parsed.wrapper_text,
             extracted_text=parsed.extracted_text,

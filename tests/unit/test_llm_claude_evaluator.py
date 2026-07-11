@@ -236,7 +236,9 @@ async def test_invalid_confidence_value_raises_llm_evaluation_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_one_line_take_too_long_raises_llm_evaluation_error() -> None:
+async def test_one_line_take_too_long_is_clipped_not_rejected() -> None:
+    """Mirror of the Gemini adapter's clipping behaviour — see
+    `_llm_evaluator_shared.clip_one_line_take`."""
     long_response = json.dumps(
         {
             "confidence": "high",
@@ -248,8 +250,10 @@ async def test_one_line_take_too_long_raises_llm_evaluation_error() -> None:
         SecretStr("test-key"),
         call=_make_callable(long_response),
     )
-    with pytest.raises(LlmEvaluationError, match="too long"):
-        await evaluator.evaluate(_listing(), _entry())
+    evaluation = await evaluator.evaluate(_listing(), _entry())
+    assert len(evaluation.one_line_take) == 120
+    assert evaluation.one_line_take == "x" * 119 + "…"
+    assert evaluation.confidence == "high"  # verdict preserved
 
 
 @pytest.mark.asyncio

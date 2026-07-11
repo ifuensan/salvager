@@ -302,7 +302,11 @@ async def test_invalid_confidence_value_raises_llm_evaluation_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_one_line_take_too_long_raises_llm_evaluation_error() -> None:
+async def test_one_line_take_too_long_is_clipped_not_rejected() -> None:
+    """An over-long take is a display constraint, not a bad verdict: models
+    routinely need >120 chars for multi-variant "lote" listings, and raising
+    here failed the same listings deterministically every cycle (observed in
+    prod 2026-07). The take is clipped to 120 chars with an ellipsis."""
     long_response = json.dumps(
         {
             "confidence": "high",
@@ -314,8 +318,32 @@ async def test_one_line_take_too_long_raises_llm_evaluation_error() -> None:
         SecretStr("test-key"),
         call=_make_callable(long_response),
     )
-    with pytest.raises(LlmEvaluationError, match="too long"):
-        await evaluator.evaluate(_listing(), _entry())
+    evaluation = await evaluator.evaluate(_listing(), _entry())
+    assert len(evaluation.one_line_take) == 120
+    assert evaluation.one_line_take == "x" * 119 + "…"
+    assert evaluation.confidence == "high"  # verdict preserved
+
+
+@pytest.mark.asyncio
+async def test_one_line_take_at_exactly_the_cap_is_untouched() -> None:
+    response = json.dumps(
+        {
+            "confidence": "medium",
+            "one_line_take": "y" * 120,
+            "is_container": False,
+        }
+    )
+    evaluator = GeminiFlashEvaluator(SecretStr("test-key"), call=_make_callable(response))
+    evaluation = await evaluator.evaluate(_listing(), _entry())
+    assert evaluation.one_line_take == "y" * 120
+
+
+def test_default_model_is_not_the_retired_flavour() -> None:
+    """gemini-2.0-flash was retired by Google on 2026-07-11 (API returns 404
+    "no longer available") — pin the default so a revert fails loudly."""
+    from salvager.adapters.llm_gemini.evaluator import _DEFAULT_MODEL
+
+    assert _DEFAULT_MODEL == "gemini-2.5-flash"
 
 
 @pytest.mark.asyncio
