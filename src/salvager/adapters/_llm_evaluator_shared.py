@@ -20,10 +20,20 @@ from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 from salvager.domain.wishlist import WishlistEntry
 
-#: Hard cap on the model's ``one_line_take`` field. Anything longer
-#: raises :class:`LlmEvaluationError` at the caller — operators expect
-#: a Telegram-renderable single line, not a paragraph.
+#: Hard cap on the model's ``one_line_take`` field — operators expect a
+#: Telegram-renderable single line, not a paragraph. Over-long takes are
+#: clipped (:func:`clip_one_line_take`), never discarded: the length is a
+#: display constraint, and models routinely need >120 chars to describe
+#: multi-variant "lote" listings, which made a raise-on-overflow fail the
+#: same listings deterministically every cycle.
 MAX_ONE_LINE_TAKE = 120
+
+
+def clip_one_line_take(take: str) -> str:
+    """Clip ``take`` to :data:`MAX_ONE_LINE_TAKE` chars (ellipsis-terminated)."""
+    if len(take) <= MAX_ONE_LINE_TAKE:
+        return take
+    return take[: MAX_ONE_LINE_TAKE - 1] + "…"
 
 
 # ─────────────────────────────────────────────────────────────────────────

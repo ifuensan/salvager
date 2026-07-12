@@ -34,8 +34,8 @@ from datetime import UTC, datetime
 from pydantic import SecretStr, ValidationError
 
 from salvager.adapters._llm_evaluator_shared import (
-    MAX_ONE_LINE_TAKE,
     budget_short_circuit_evaluation,
+    clip_one_line_take,
     exceeds_all_ceilings,
     extract_json_object,
 )
@@ -51,7 +51,22 @@ from salvager.observability.logging import get_logger
 #: Take any prompt string, return the model's raw text reply.
 GeminiCallable = Callable[[str], Awaitable[str]]
 
-_DEFAULT_MODEL = "gemini-2.0-flash"
+# gemini-2.0-flash was retired by Google (404 "no longer available",
+# observed 2026-07-11); 2.5-flash is its successor. Thinking is disabled at
+# the call site — this is a classification task and reasoning tokens only
+# add cost + latency.
+_DEFAULT_MODEL = "gemini-2.5-flash"
+
+#: Models whose thinking can be turned off with ``thinking_budget=0``.
+#: 2.5 Pro rejects a zero budget (400 INVALID_ARGUMENT) and pre-2.5 models
+#: don't take a ThinkingConfig at all, so the toggle is applied only to the
+#: 2.5 Flash family (flash + flash-lite).
+_THINKING_TOGGLE_PREFIX = "gemini-2.5-flash"
+
+
+def _supports_thinking_toggle(model: str) -> bool:
+    """True iff ``model`` accepts ``thinking_budget=0`` (2.5 Flash family)."""
+    return model.startswith(_THINKING_TOGGLE_PREFIX)
 
 
 class GeminiFlashEvaluator(ListingEvaluator):
@@ -97,16 +112,11 @@ class GeminiFlashEvaluator(ListingEvaluator):
             )
             raise LlmEvaluationError(f"malformed Gemini response: {raw[:200]}") from exc
 
-        if len(parsed.one_line_take) > MAX_ONE_LINE_TAKE:
-            raise LlmEvaluationError(
-                f"one_line_take too long ({len(parsed.one_line_take)} > {MAX_ONE_LINE_TAKE} chars)"
-            )
-
         return ListingEvaluation(
             listing_id=listing.listing_id,
             entry_key=entry.entry_key,
             confidence=parsed.confidence,
-            one_line_take=parsed.one_line_take,
+            one_line_take=clip_one_line_take(parsed.one_line_take),
             is_container=parsed.is_container,
             wrapper_text=parsed.wrapper_text,
             extracted_text=parsed.extracted_text,
@@ -133,14 +143,27 @@ def _build_default_call(api_key: str, model: str) -> GeminiCallable:
     #   dependency of this specific adapter only.
     from google import genai
     from google.genai import errors as genai_errors
+    from google.genai import types as genai_types
 
     client = genai.Client(api_key=api_key)
+    # Classification workload: disable 2.5-flash's thinking so each eval
+    # costs/behaves like the retired 2.0-flash (0 reasoning tokens). Only
+    # the 2.5 Flash family accepts a zero budget — other model overrides
+    # get no ThinkingConfig rather than a 400 at call time.
+    config = (
+        genai_types.GenerateContentConfig(
+            thinking_config=genai_types.ThinkingConfig(thinking_budget=0)
+        )
+        if _supports_thinking_toggle(model)
+        else None
+    )
 
     async def _call(prompt: str) -> str:
         try:
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
+                config=config,
             )
         except genai_errors.APIError as exc:
             if getattr(exc, "code", None) == 429 or "rate" in str(exc).lower():

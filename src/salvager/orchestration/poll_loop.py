@@ -501,6 +501,10 @@ async def _evaluate_concurrently(
                         "entry_display_name": entry.display_name,
                         "listing_id": listing.listing_id,
                         "error_class": exc.__class__.__name__,
+                        # The message, not just the class — a class-only log
+                        # made a deterministic per-listing failure take days
+                        # to diagnose.
+                        "error": str(exc)[:200],
                     },
                 )
                 return listing, None
