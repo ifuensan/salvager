@@ -12,6 +12,33 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.3.5] — 2026-07-12
+
+Google retired `gemini-2.0-flash` on 2026-07-11 (the API now returns 404
+"no longer available") and the daemon hardcoded it — production stopped
+evaluating new listings the same evening. Investigating that also
+root-caused a second, older failure: model takes longer than 120 chars
+were rejected outright, deterministically failing multi-variant "lote"
+listings every cycle and burning a quota call each retry.
+
+**LLM evaluation survives model retirement and over-long takes (#38)**
+
+- Gemini default model bumped to `gemini-2.5-flash`, with thinking
+  disabled (`thinking_budget=0`) — classification workload; reasoning
+  tokens only add cost and latency. The toggle is gated to the 2.5
+  Flash family (2.5 Pro rejects a zero budget; pre-2.5 models take no
+  ThinkingConfig), and the default is pinned by a test so a revert
+  fails loudly.
+- Over-long `one_line_take` values are now clipped to 120 chars with an
+  ellipsis (shared `clip_one_line_take`, Gemini + Claude adapters)
+  instead of discarding an otherwise-valid verdict. The cap is a
+  Telegram display constraint, not a correctness gate.
+- `llm_eval_failed` log events now carry the exception message
+  (`str(exc)[:200]`), not just the class — the class-only log is what
+  made these failures take days to diagnose.
+
+---
+
 ## [0.3.4] — 2026-07-11
 
 eBay started charging a flat import fee on items shipped into Spain from
@@ -526,8 +553,9 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.3.5...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.3.5]: https://github.com/ifuensan/salvager/releases/tag/v0.3.5
 [0.3.4]: https://github.com/ifuensan/salvager/releases/tag/v0.3.4
 [0.3.3]: https://github.com/ifuensan/salvager/releases/tag/v0.3.3
 [0.3.2]: https://github.com/ifuensan/salvager/releases/tag/v0.3.2
