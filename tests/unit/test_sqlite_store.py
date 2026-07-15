@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -17,6 +17,7 @@ from salvager.adapters.sqlite_store import (
 )
 from salvager.adapters.sqlite_store.migrations import db_path_under
 from salvager.domain.alert import AlertSnapshot
+from salvager.domain.alert_watch import AlertUpdate, AlertWatch
 from salvager.domain.audit import (
     CallbackAudit,
     Phase2GuardrailTripped,
@@ -136,8 +137,8 @@ def test_migration_runner_applies_pending_migrations(tmp_path: Path) -> None:
     connection = open_connection(tmp_path / "salvager.db")
     try:
         version = MigrationRunner().run(connection)
-        assert version == 2
-        assert MigrationRunner().current_version(connection) == 2
+        assert version == 3
+        assert MigrationRunner().current_version(connection) == 3
     finally:
         connection.close()
 
@@ -210,7 +211,7 @@ def test_migration_runner_persists_schema_version(migrated_db: Path) -> None:
     connection = open_connection(migrated_db)
     try:
         row = connection.execute("SELECT value FROM _meta WHERE key='schema_version'").fetchone()
-        assert int(row[0]) == 2
+        assert int(row[0]) == 3
     finally:
         connection.close()
 
@@ -433,3 +434,169 @@ def test_audit_tables_have_no_update_or_delete_triggers(
         assert "UPDATE" not in sql_upper and "DELETE" not in sql_upper, (
             f"trigger {row[0]!r} on {audit_table} would mutate audit data"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Alert watches + updates — edit-alerts-on-state-change (migration 0003)
+# ─────────────────────────────────────────────────────────────────────────
+
+_T_WATCH = datetime(2026, 7, 14, 12, 0, 0, tzinfo=UTC)
+
+
+def _make_watch(**overrides: object) -> AlertWatch:
+    base: dict[str, object] = {
+        "alert_id": uuid4(),
+        "listing_id": "lst-001",
+        "marketplace": "wallapop",
+        "entry_key": ("WD", "Red Plus 4TB", "WD40EFPX"),
+        "telegram_message_id": 4711,
+        "last_price_eur": Decimal("55.00"),
+        "last_is_reserved": False,
+        "watch_until": _T_WATCH + timedelta(days=7),
+    }
+    base.update(overrides)
+    return AlertWatch(**base)  # type: ignore[arg-type]
+
+
+async def test_snapshot_persists_telegram_message_id(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        snapshot = _make_snapshot(telegram_message_id=4711)
+        audit_id = await store.record_alert_snapshot(snapshot)
+        loaded = await store.get_alert_snapshot(audit_id)
+        assert loaded is not None
+        assert loaded.telegram_message_id == 4711
+    finally:
+        await store.close()
+
+
+async def test_snapshot_message_id_defaults_to_none(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        audit_id = await store.record_alert_snapshot(_make_snapshot())
+        loaded = await store.get_alert_snapshot(audit_id)
+        assert loaded is not None
+        assert loaded.telegram_message_id is None
+    finally:
+        await store.close()
+
+
+async def test_watch_round_trip_and_entry_scoping(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        watch = _make_watch()
+        other_entry = _make_watch(entry_key=("Seagate", "EXOS X16", "ST14000NM001G"))
+        await store.create_watch(watch)
+        await store.create_watch(other_entry)
+
+        active = await store.active_watches(watch.entry_key, marketplace="wallapop", now=_T_WATCH)
+        assert [w.alert_id for w in active] == [watch.alert_id]
+        loaded = active[0]
+        assert loaded.last_price_eur == Decimal("55.00")
+        assert loaded.last_is_reserved is False
+        assert loaded.telegram_message_id == 4711
+        assert loaded.last_edited_at is None
+    finally:
+        await store.close()
+
+
+async def test_expired_watch_not_active_and_prunable(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        expired = _make_watch(watch_until=_T_WATCH - timedelta(seconds=1))
+        live = _make_watch(alert_id=uuid4())
+        await store.create_watch(expired)
+        await store.create_watch(live)
+
+        active = await store.active_watches(expired.entry_key, marketplace="wallapop", now=_T_WATCH)
+        assert [w.alert_id for w in active] == [live.alert_id]
+
+        pruned = await store.prune_expired_watches(now=_T_WATCH)
+        assert pruned == 1
+        # The live one survives the prune.
+        assert (
+            len(await store.active_watches(live.entry_key, marketplace="wallapop", now=_T_WATCH))
+            == 1
+        )
+    finally:
+        await store.close()
+
+
+async def test_advance_watch_with_and_without_edit_timestamp(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        watch = _make_watch()
+        await store.create_watch(watch)
+
+        # Silent advance (sub-threshold drop / increase): price moves, no edit stamp.
+        await store.advance_watch(watch.alert_id, price_eur=Decimal("54.80"), is_reserved=False)
+        [current] = await store.active_watches(
+            watch.entry_key, marketplace="wallapop", now=_T_WATCH
+        )
+        assert current.last_price_eur == Decimal("54.80")
+        assert current.last_edited_at is None
+
+        # Successful-edit advance stamps last_edited_at.
+        await store.advance_watch(
+            watch.alert_id,
+            price_eur=Decimal("48.00"),
+            is_reserved=True,
+            edited_at=_T_WATCH,
+        )
+        [current] = await store.active_watches(
+            watch.entry_key, marketplace="wallapop", now=_T_WATCH
+        )
+        assert current.last_price_eur == Decimal("48.00")
+        assert current.last_is_reserved is True
+        assert current.last_edited_at == _T_WATCH
+    finally:
+        await store.close()
+
+
+async def test_close_watch_removes_row(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        watch = _make_watch()
+        await store.create_watch(watch)
+        await store.close_watch(watch.alert_id)
+        assert (
+            await store.active_watches(watch.entry_key, marketplace="wallapop", now=_T_WATCH) == []
+        )
+    finally:
+        await store.close()
+
+
+async def test_alert_updates_append_and_ordered_read(migrated_db: Path) -> None:
+    store = SqliteStore(migrated_db)
+    try:
+        alert_id = uuid4()
+        first = AlertUpdate(
+            alert_id=alert_id,
+            change_kind="price_drop",
+            old_value="55.00",
+            new_value="48.00",
+            edited_at=_T_WATCH,
+            edit_ok=True,
+            rendered_text="📉 48,00 € (antes 55,00 €)\nbody",
+        )
+        second = AlertUpdate(
+            alert_id=alert_id,
+            change_kind="reserved",
+            old_value="False",
+            new_value="True",
+            edited_at=_T_WATCH + timedelta(minutes=30),
+            edit_ok=False,
+            rendered_text="🔴 RESERVADO\nbody",
+        )
+        await store.record_alert_update(first)
+        await store.record_alert_update(second)
+
+        updates = await store.get_alert_updates(alert_id)
+        assert [u.change_kind for u in updates] == ["price_drop", "reserved"]
+        assert updates[0].edit_ok is True
+        assert updates[1].edit_ok is False
+        assert updates[1].rendered_text.startswith("🔴 RESERVADO")
+        # Scoped: another alert sees nothing.
+        assert await store.get_alert_updates(uuid4()) == []
+    finally:
+        await store.close()

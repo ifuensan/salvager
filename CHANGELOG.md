@@ -7,8 +7,41 @@ NFR-M4.
 
 ## [Unreleased]
 
-Nothing on the wire today. Post-v1 work is described in
-[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
+Alerts used to freeze the moment they fired: the daemon never looked at
+an alerted listing again, so the message the operator acts on could go
+stale — a reserved listing kept its live `✅ Comprar` button, and price
+drops went unseen.
+
+**Live-updating alerts — the original Telegram message edits itself on state changes**
+
+- Every dispatched alert now persists its Telegram `message_id`
+  (migration `0003`, nullable on historical rows — those are never
+  edited) and opens a *watch* for `alerts.watch_days` (default 7).
+- The poll cycle diffs watched listings against the fresh search
+  results **before** the dedup filter discards them — zero extra
+  marketplace calls. Reserved flips (both directions) and price drops
+  ≥ `alerts.min_price_drop_pct` (1 %) AND ≥ `alerts.min_price_drop_eur`
+  (0,50 €) re-render the full body with current values (buyer-total
+  breakdown included) plus a single replaceable banner: `🔴 RESERVADO`,
+  `🟢 Disponible de nuevo`, `📉 80,00 € (antes 95,00 €)`. Sub-threshold
+  movement and increases advance the watch silently (no edit churn from
+  repricing bots).
+- Drops ≥ `alerts.price_drop_ping_pct` (10 %) ALSO send a short new
+  message — Telegram edits are silent, and a big drop is the one
+  transition worth a notification.
+- Phase 2 interplay: on reserved, the `✅ Comprar` row becomes a
+  non-tappable `🔴 Reservado` badge (restored on flip-back); an alert
+  whose buy is in-flight is never repainted.
+- Edits are best-effort and single-attempt: the watch state advances
+  only after a successful edit, so failures retry naturally next cycle.
+  A deleted message closes the watch silently. Every attempt lands in
+  the append-only `alert_updates` table with the full rendered body —
+  `audit show --id <n>` now replays the alert's edit history.
+- Sold detection is explicitly out of scope (no reliable signal in
+  search results).
+
+Post-v1 work is described in [ROADMAP.md](ROADMAP.md) under
+"Post-launch (deferred)".
 
 ---
 

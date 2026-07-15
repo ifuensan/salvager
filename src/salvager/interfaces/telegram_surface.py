@@ -29,12 +29,40 @@ class TelegramSurface(ABC):
     """Port for the Telegram delivery + callback channel."""
 
     @abstractmethod
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(
+        self,
+        rendered: RenderedAlert,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> int:
         """Deliver a rendered alert and return the Telegram message_id.
 
         The message_id is persisted on the alert_snapshot so callback
         handling and ``edit_keyboard`` can find the originating
-        message later.
+        message later. ``reply_to_message_id`` threads the message as a
+        Telegram reply (used by the big-drop ping so the notification
+        points back at the edited alert)."""
+
+    @abstractmethod
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        """Edit a previously sent alert's body in place.
+
+        ``has_photo`` selects Telegram's ``editMessageCaption`` (photo
+        alerts — the body is the caption) vs ``editMessageText``; the
+        caller derives it from the stored snapshot's ``photo_urls``.
+        ``rendered.inline_keyboard`` is ALWAYS sent with the edit —
+        Telegram drops the current keyboard otherwise.
+
+        Single attempt (no in-cycle retry — the next poll cycle
+        re-diffs and retries). "message is not modified" is a silent
+        no-op success; "message to edit not found" raises
+        ``TelegramMessageGone`` (terminal: the watch closes).
         """
 
     @abstractmethod

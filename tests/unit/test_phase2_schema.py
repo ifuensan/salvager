@@ -32,7 +32,7 @@ def test_migration_creates_phase2_tables_and_advances_version(tmp_path: Path) ->
     finally:
         connection.close()
 
-    assert version == 2
+    assert version == 3
     tables = _table_names(db_path)
     for table in _PHASE2_TABLES:
         assert table in tables, f"migration 0002 must create {table!r}"
@@ -74,7 +74,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
             version = MigrationRunner().run(connection)
         finally:
             connection.close()
-        assert version == 2
+        assert version == 3
 
     # Re-running never duplicates the seeded single-row state.
     connection = open_connection(db_path)

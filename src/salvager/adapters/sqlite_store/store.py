@@ -24,11 +24,13 @@ import asyncio
 import json
 import sqlite3
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
 from salvager.adapters.sqlite_store.connection import open_connection
 from salvager.domain.alert import AlertSnapshot
+from salvager.domain.alert_watch import AlertUpdate, AlertWatch
 from salvager.domain.audit import (
     CallbackAudit,
     Phase2GuardrailTripped,
@@ -110,6 +112,186 @@ class SqliteStore(Store):
             await asyncio.to_thread(_write)
 
     # ─────────────────────────────────────────────────────────────────
+    # Alert watches — mutable state (edit-alerts-on-state-change)
+    # ─────────────────────────────────────────────────────────────────
+
+    async def create_watch(self, watch: AlertWatch) -> None:
+        def _write() -> None:
+            self._connection.execute(
+                """
+                INSERT OR REPLACE INTO alert_watches (
+                    alert_id, listing_id, marketplace, entry_manufacturer,
+                    entry_model, entry_ref, telegram_message_id, last_price_eur,
+                    last_is_reserved, watch_until, last_edited_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(watch.alert_id),
+                    watch.listing_id,
+                    watch.marketplace,
+                    *watch.entry_key,
+                    watch.telegram_message_id,
+                    str(watch.last_price_eur),
+                    1 if watch.last_is_reserved else 0,
+                    watch.watch_until.isoformat(),
+                    watch.last_edited_at.isoformat() if watch.last_edited_at else None,
+                ),
+            )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def active_watches(
+        self, entry_key: EntryKey, *, marketplace: str, now: datetime
+    ) -> list[AlertWatch]:
+        iso_now = now.isoformat()
+
+        def _read() -> list[AlertWatch]:
+            cursor = self._connection.execute(
+                """
+                SELECT alert_id, listing_id, marketplace, entry_manufacturer,
+                       entry_model, entry_ref, telegram_message_id, last_price_eur,
+                       last_is_reserved, watch_until, last_edited_at
+                FROM alert_watches
+                WHERE entry_manufacturer = ? AND entry_model = ? AND entry_ref = ?
+                  AND marketplace = ?
+                  AND watch_until > ?
+                """,
+                (*entry_key, marketplace, iso_now),
+            )
+            return [_row_to_alert_watch(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_read)
+
+    async def advance_watch(
+        self,
+        alert_id: UUID,
+        *,
+        price_eur: Decimal,
+        is_reserved: bool,
+        edited_at: datetime | None = None,
+    ) -> None:
+        def _write() -> None:
+            if edited_at is not None:
+                self._connection.execute(
+                    """
+                    UPDATE alert_watches
+                    SET last_price_eur = ?, last_is_reserved = ?, last_edited_at = ?
+                    WHERE alert_id = ?
+                    """,
+                    (str(price_eur), 1 if is_reserved else 0, edited_at.isoformat(), str(alert_id)),
+                )
+            else:
+                self._connection.execute(
+                    """
+                    UPDATE alert_watches
+                    SET last_price_eur = ?, last_is_reserved = ?
+                    WHERE alert_id = ?
+                    """,
+                    (str(price_eur), 1 if is_reserved else 0, str(alert_id)),
+                )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def close_watch(self, alert_id: UUID) -> None:
+        def _write() -> None:
+            self._connection.execute(
+                "DELETE FROM alert_watches WHERE alert_id = ?",
+                (str(alert_id),),
+            )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def prune_expired_watches(self, *, now: datetime) -> int:
+        iso_now = now.isoformat()
+
+        def _write() -> int:
+            cursor = self._connection.execute(
+                "DELETE FROM alert_watches WHERE watch_until <= ?",
+                (iso_now,),
+            )
+            return int(cursor.rowcount or 0)
+
+        async with self._write_lock:
+            return await asyncio.to_thread(_write)
+
+    async def get_last_callback_verb(self, alert_id: UUID) -> tuple[str, datetime] | None:
+        def _read() -> tuple[str, datetime] | None:
+            cursor = self._connection.execute(
+                """
+                SELECT verb, received_at FROM callbacks
+                WHERE alert_id = ?
+                ORDER BY audit_id DESC
+                LIMIT 1
+                """,
+                (str(alert_id),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return str(row[0]), datetime.fromisoformat(row[1])
+
+        return await asyncio.to_thread(_read)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Alert updates — append-only audit (NFR-S4)
+    # ─────────────────────────────────────────────────────────────────
+
+    async def record_alert_update(self, update: AlertUpdate) -> None:
+        def _write() -> None:
+            self._connection.execute(
+                """
+                INSERT INTO alert_updates (
+                    alert_id, change_kind, old_value, new_value,
+                    edited_at, edit_ok, rendered_text
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(update.alert_id),
+                    update.change_kind,
+                    update.old_value,
+                    update.new_value,
+                    update.edited_at.isoformat(),
+                    1 if update.edit_ok else 0,
+                    update.rendered_text,
+                ),
+            )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def get_alert_updates(self, alert_id: UUID) -> list[AlertUpdate]:
+        def _read() -> list[AlertUpdate]:
+            cursor = self._connection.execute(
+                """
+                SELECT alert_id, change_kind, old_value, new_value,
+                       edited_at, edit_ok, rendered_text
+                FROM alert_updates
+                WHERE alert_id = ?
+                ORDER BY audit_id ASC
+                """,
+                (str(alert_id),),
+            )
+            return [
+                AlertUpdate(
+                    alert_id=row["alert_id"],
+                    change_kind=row["change_kind"],
+                    old_value=row["old_value"],
+                    new_value=row["new_value"],
+                    edited_at=datetime.fromisoformat(row["edited_at"]),
+                    edit_ok=bool(row["edit_ok"]),
+                    rendered_text=row["rendered_text"],
+                )
+                for row in cursor.fetchall()
+            ]
+
+        return await asyncio.to_thread(_read)
+
+    # ─────────────────────────────────────────────────────────────────
     # Snooze state
     # ─────────────────────────────────────────────────────────────────
 
@@ -167,9 +349,10 @@ class SqliteStore(Store):
                 INSERT INTO alert_snapshots (
                     alert_id, entry_manufacturer, entry_model, entry_ref,
                     entry_display_name, listing_json, evaluation_json,
-                    phase, phase2_max_price_eur, rendered_at
+                    phase, phase2_max_price_eur, rendered_at,
+                    telegram_message_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(snapshot.alert_id),
@@ -180,6 +363,7 @@ class SqliteStore(Store):
                     snapshot.phase,
                     phase2_price,
                     snapshot.rendered_at.isoformat(),
+                    snapshot.telegram_message_id,
                 ),
             )
             return int(cursor.lastrowid or 0)
@@ -193,7 +377,8 @@ class SqliteStore(Store):
                 """
                 SELECT alert_id, entry_manufacturer, entry_model, entry_ref,
                        entry_display_name, listing_json, evaluation_json,
-                       phase, phase2_max_price_eur, rendered_at
+                       phase, phase2_max_price_eur, rendered_at,
+                       telegram_message_id
                 FROM alert_snapshots
                 WHERE audit_id = ?
                 """,
@@ -212,7 +397,8 @@ class SqliteStore(Store):
                 """
                 SELECT alert_id, entry_manufacturer, entry_model, entry_ref,
                        entry_display_name, listing_json, evaluation_json,
-                       phase, phase2_max_price_eur, rendered_at
+                       phase, phase2_max_price_eur, rendered_at,
+                       telegram_message_id
                 FROM alert_snapshots
                 WHERE alert_id = ?
                 """,
@@ -308,4 +494,24 @@ def _row_to_alert_snapshot(row: sqlite3.Row) -> AlertSnapshot:
         phase=row["phase"],
         phase2_max_price_eur=row["phase2_max_price_eur"],
         rendered_at=datetime.fromisoformat(row["rendered_at"]),
+        telegram_message_id=row["telegram_message_id"],
+    )
+
+
+def _row_to_alert_watch(row: sqlite3.Row) -> AlertWatch:
+    """Re-hydrate an :class:`AlertWatch` from a raw alert_watches row."""
+    return AlertWatch(
+        alert_id=row["alert_id"],
+        listing_id=row["listing_id"],
+        marketplace=row["marketplace"],
+        entry_key=(row["entry_manufacturer"], row["entry_model"], row["entry_ref"]),
+        telegram_message_id=row["telegram_message_id"],
+        last_price_eur=Decimal(row["last_price_eur"]),
+        last_is_reserved=bool(row["last_is_reserved"]),
+        watch_until=datetime.fromisoformat(row["watch_until"]),
+        last_edited_at=(
+            datetime.fromisoformat(row["last_edited_at"])
+            if row["last_edited_at"] is not None
+            else None
+        ),
     )

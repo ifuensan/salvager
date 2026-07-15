@@ -76,6 +76,7 @@ from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.interfaces.scheduler import Scheduler
 from salvager.interfaces.store import EntryKey
 from salvager.observability.logging import get_logger
+from salvager.orchestration.alert_updater import AlertUpdatePolicy
 from salvager.orchestration.buy_orchestrator import BuyOrchestrator, WishlistLoader
 from salvager.orchestration.callback_handler import (
     DEFAULT_SNOOZE_HOURS,
@@ -266,6 +267,12 @@ def compose_daemon(
         ebay_quota=ebay_quota,
     )
 
+    alerts_policy = AlertUpdatePolicy(
+        watch_days=config.alerts.watch_days,
+        min_price_drop_pct=config.alerts.min_price_drop_pct,
+        min_price_drop_eur=config.alerts.min_price_drop_eur,
+        price_drop_ping_pct=config.alerts.price_drop_ping_pct,
+    )
     wallapop_job = _build_wallapop_job(
         env=env,
         config=config,
@@ -276,6 +283,7 @@ def compose_daemon(
         telegram=telegram,
         reporter=reporter,
         phase2_preflight=phase2.preflight,
+        alerts_policy=alerts_policy,
         log=log,
     )
     ebay_job = _build_ebay_job(
@@ -287,6 +295,7 @@ def compose_daemon(
         telegram=telegram,
         quota=ebay_quota,
         phase2_preflight=phase2.preflight,
+        alerts_policy=alerts_policy,
         log=log,
     )
 
@@ -417,6 +426,7 @@ def _build_wallapop_job(
     telegram: TelegramBotSurface,
     reporter: DegradationReporter,
     phase2_preflight: Phase2Preflight,
+    alerts_policy: AlertUpdatePolicy,
     log: object,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the Wallapop poll closure, or return None when cookies are missing."""
@@ -450,6 +460,7 @@ def _build_wallapop_job(
             store=store,
             telegram=telegram,
             phase2_preflight=phase2_preflight,
+            alerts_policy=alerts_policy,
         )
         # Persist the API-path health to `_meta` so `health` can report
         # "wallapop_api degraded / wallapop_tinyfish healthy" without
@@ -472,6 +483,7 @@ def _build_ebay_job(
     telegram: TelegramBotSurface,
     quota: DailyQuotaTracker | None,
     phase2_preflight: Phase2Preflight,
+    alerts_policy: AlertUpdatePolicy,
     log: object,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the eBay poll closure, or return None when OAuth tokens are missing.
@@ -510,6 +522,7 @@ def _build_ebay_job(
             store=store,
             telegram=telegram,
             phase2_preflight=phase2_preflight,
+            alerts_policy=alerts_policy,
         )
 
     return _ebay_cycle

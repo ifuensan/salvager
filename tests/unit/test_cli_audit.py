@@ -360,3 +360,71 @@ def _run_capture(capsys: pytest.CaptureFixture[str], fn: object) -> str:
     """Run ``fn`` and return its captured stdout (test ergonomics helper)."""
     fn()  # type: ignore[operator]
     return capsys.readouterr().out
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# audit show --id — alert update history (edit-alerts-on-state-change)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _seed_updates(data_dir: Path, alert_id: str, updates: list[tuple[str, str, str, int]]) -> None:
+    """Append alert_updates rows: (change_kind, old, new, edit_ok)."""
+    connection = open_connection(db_path_under(data_dir))
+    try:
+        for n, (kind, old, new, ok) in enumerate(updates):
+            connection.execute(
+                """
+                INSERT INTO alert_updates (
+                    alert_id, change_kind, old_value, new_value,
+                    edited_at, edit_ok, rendered_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    alert_id,
+                    kind,
+                    old,
+                    new,
+                    (_T0 + timedelta(minutes=n)).isoformat(),
+                    ok,
+                    f"BANNER {kind}\nre-rendered body {n}",
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_show_id_alert_without_updates_has_no_updates_key(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _seed(tmp_path, alerts=1)
+    assert run_show(data_dir=data_dir, record_id=1) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert "updates" not in record
+
+
+def test_show_id_alert_replays_update_history_in_order(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _seed(tmp_path, alerts=1)
+    alert_id = "00000000-0000-4000-8000-000000000000"
+    _seed_updates(
+        data_dir,
+        alert_id,
+        [
+            ("price_drop", "100.00", "80.00", 1),
+            ("reserved", "False", "True", 0),
+        ],
+    )
+
+    assert run_show(data_dir=data_dir, record_id=1) == 0
+    record = json.loads(capsys.readouterr().out)
+    updates = record["updates"]
+    assert [u["change_kind"] for u in updates] == ["price_drop", "reserved"]
+    assert updates[0]["edit_ok"] is True
+    assert updates[1]["edit_ok"] is False
+    # The operator-visible body is replayable for every attempt.
+    assert updates[0]["rendered_telegram_text"].startswith("BANNER price_drop")
+    assert updates[1]["rendered_telegram_text"].startswith("BANNER reserved")

@@ -230,6 +230,13 @@ class TelegramConfigError(TelegramError):
     deliveries until the operator fixes the configuration."""
 
 
+class TelegramMessageGone(TelegramError):
+    """The edit target no longer exists ("message to edit not found") —
+    the operator deleted the alert. Terminal for that alert's watch:
+    the caller closes the watch silently and never sends a replacement
+    (edit-alerts-on-state-change, design.md Resolved Question 7)."""
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Phase 2 buy outcomes — Story 5.3 / Story 5.9
 # ─────────────────────────────────────────────────────────────────────────

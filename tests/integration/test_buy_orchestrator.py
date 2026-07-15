@@ -169,9 +169,12 @@ class FakeStore:
 class FakeTelegram(TelegramSurface):
     sent: list[RenderedAlert] = field(default_factory=list)
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.sent.append(rendered)
         return len(self.sent)
+
+    async def edit_alert(self, message_id: int, rendered: Any, *, has_photo: bool) -> None:
+        pass
 
     async def edit_keyboard(self, message_id: int, keyboard: Any) -> None:
         pass

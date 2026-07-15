@@ -23,6 +23,7 @@ from salvager.domain.alert import (
     InlineButton,
     RenderedAlert,
 )
+from salvager.domain.alert_watch import AlertUpdate, AlertWatch
 from salvager.domain.audit import (
     CallbackAudit,
     TapEventAudit,
@@ -134,6 +135,43 @@ class _FakeStore(Store):
     async def get_all_meta(self) -> dict[str, str]:
         return {}
 
+    async def get_last_callback_verb(self, alert_id: UUID) -> tuple[str, datetime] | None:
+        for callback in reversed(self.callbacks):
+            if callback.alert_id == alert_id:
+                return callback.verb, callback.occurred_at
+        return None
+
+    # Alert watches / updates — not exercised here.
+    async def create_watch(self, watch: AlertWatch) -> None:
+        return None
+
+    async def active_watches(
+        self, entry_key: EntryKey, *, marketplace: str, now: datetime
+    ) -> list[AlertWatch]:
+        return []
+
+    async def advance_watch(
+        self,
+        alert_id: UUID,
+        *,
+        price_eur: Decimal,
+        is_reserved: bool,
+        edited_at: datetime | None = None,
+    ) -> None:
+        return None
+
+    async def close_watch(self, alert_id: UUID) -> None:
+        return None
+
+    async def prune_expired_watches(self, *, now: datetime) -> int:
+        return 0
+
+    async def record_alert_update(self, update: AlertUpdate) -> None:
+        return None
+
+    async def get_alert_updates(self, alert_id: UUID) -> list[AlertUpdate]:
+        return []
+
     # Phase 2 — never invoked here.
     async def record_tap_event(self, tap: TapEventAudit) -> None:
         raise AssertionError("Phase 2 audit should not run in Story 3.13 tests")
@@ -149,9 +187,18 @@ class _FakeSurface(TelegramSurface):
         self.edits: list[tuple[int, list[list[InlineButton]] | None]] = []
         self.send_calls: list[RenderedAlert] = []
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.send_calls.append(rendered)
         return 999
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
 
     async def edit_keyboard(
         self,
@@ -686,13 +733,22 @@ def _run_subprocess_logging_handle_unknown_verb() -> str:
         "    async def get_alert_snapshot(self, *a, **kw): return None\n"
         "    async def get_alert_snapshot_by_alert_id(self, *a, **kw): return None\n"
         "    async def record_callback(self, *a, **kw): pass\n"
+        "    async def get_last_callback_verb(self, *a, **kw): return None\n"
         "    async def set_meta(self, *a, **kw): pass\n"
         "    async def get_meta(self, *a, **kw): return None\n"
         "    async def get_all_meta(self, *a, **kw): return {}\n"
         "    async def record_tap_event(self, *a, **kw): pass\n"
         "    async def record_transaction(self, *a, **kw): pass\n"
+        "    async def create_watch(self, *a, **kw): pass\n"
+        "    async def active_watches(self, *a, **kw): return []\n"
+        "    async def advance_watch(self, *a, **kw): pass\n"
+        "    async def close_watch(self, *a, **kw): pass\n"
+        "    async def prune_expired_watches(self, *a, **kw): return 0\n"
+        "    async def record_alert_update(self, *a, **kw): pass\n"
+        "    async def get_alert_updates(self, *a, **kw): return []\n"
         "class _T(TelegramSurface):\n"
         "    async def send(self, *a, **kw): return 1\n"
+        "    async def edit_alert(self, *a, **kw): pass\n"
         "    async def edit_keyboard(self, *a, **kw): pass\n"
         "    async def listen_callbacks(self, *a, **kw): pass\n"
         "async def main():\n"
@@ -723,13 +779,22 @@ def _run_subprocess_logging_handle_buy() -> str:
         "    async def get_alert_snapshot(self, *a, **kw): return None\n"
         "    async def get_alert_snapshot_by_alert_id(self, *a, **kw): return None\n"
         "    async def record_callback(self, *a, **kw): pass\n"
+        "    async def get_last_callback_verb(self, *a, **kw): return None\n"
         "    async def set_meta(self, *a, **kw): pass\n"
         "    async def get_meta(self, *a, **kw): return None\n"
         "    async def get_all_meta(self, *a, **kw): return {}\n"
         "    async def record_tap_event(self, *a, **kw): pass\n"
         "    async def record_transaction(self, *a, **kw): pass\n"
+        "    async def create_watch(self, *a, **kw): pass\n"
+        "    async def active_watches(self, *a, **kw): return []\n"
+        "    async def advance_watch(self, *a, **kw): pass\n"
+        "    async def close_watch(self, *a, **kw): pass\n"
+        "    async def prune_expired_watches(self, *a, **kw): return 0\n"
+        "    async def record_alert_update(self, *a, **kw): pass\n"
+        "    async def get_alert_updates(self, *a, **kw): return []\n"
         "class _T(TelegramSurface):\n"
         "    async def send(self, *a, **kw): return 1\n"
+        "    async def edit_alert(self, *a, **kw): pass\n"
         "    async def edit_keyboard(self, *a, **kw): pass\n"
         "    async def listen_callbacks(self, *a, **kw): pass\n"
         "async def main():\n"
@@ -776,13 +841,22 @@ def _run_subprocess_logging_handle_snooze() -> str:
         "    async def get_alert_snapshot(self, *a, **kw): return None\n"
         "    async def get_alert_snapshot_by_alert_id(self, *a, **kw): return SNAP\n"
         "    async def record_callback(self, *a, **kw): pass\n"
+        "    async def get_last_callback_verb(self, *a, **kw): return None\n"
         "    async def set_meta(self, *a, **kw): pass\n"
         "    async def get_meta(self, *a, **kw): return None\n"
         "    async def get_all_meta(self, *a, **kw): return {}\n"
         "    async def record_tap_event(self, *a, **kw): pass\n"
         "    async def record_transaction(self, *a, **kw): pass\n"
+        "    async def create_watch(self, *a, **kw): pass\n"
+        "    async def active_watches(self, *a, **kw): return []\n"
+        "    async def advance_watch(self, *a, **kw): pass\n"
+        "    async def close_watch(self, *a, **kw): pass\n"
+        "    async def prune_expired_watches(self, *a, **kw): return 0\n"
+        "    async def record_alert_update(self, *a, **kw): pass\n"
+        "    async def get_alert_updates(self, *a, **kw): return []\n"
         "class _T(TelegramSurface):\n"
         "    async def send(self, *a, **kw): return 1\n"
+        "    async def edit_alert(self, *a, **kw): pass\n"
         "    async def edit_keyboard(self, *a, **kw): pass\n"
         "    async def listen_callbacks(self, *a, **kw): pass\n"
         "async def main():\n"

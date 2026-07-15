@@ -48,6 +48,7 @@ from salvager.domain.alert import (
 from salvager.domain.errors import (
     TelegramConfigError,
     TelegramDeliveryFailed,
+    TelegramMessageGone,
 )
 from salvager.interfaces.telegram_surface import (
     CallbackHandler,
@@ -77,6 +78,7 @@ class TelegramBotProtocol(Protocol):
         *,
         parse_mode: str | None = ...,
         reply_markup: Any = ...,
+        reply_to_message_id: int | None = ...,
     ) -> Any: ...
 
     async def send_photo(
@@ -87,6 +89,7 @@ class TelegramBotProtocol(Protocol):
         caption: str | None = ...,
         parse_mode: str | None = ...,
         reply_markup: Any = ...,
+        reply_to_message_id: int | None = ...,
     ) -> Any: ...
 
     async def edit_message_reply_markup(
@@ -94,6 +97,26 @@ class TelegramBotProtocol(Protocol):
         chat_id: int,
         message_id: int,
         *,
+        reply_markup: Any = ...,
+    ) -> Any: ...
+
+    async def edit_message_caption(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        caption: str | None = ...,
+        parse_mode: str | None = ...,
+        reply_markup: Any = ...,
+    ) -> Any: ...
+
+    async def edit_message_text(
+        self,
+        text: str,
+        chat_id: int | None = ...,
+        message_id: int | None = ...,
+        *,
+        parse_mode: str | None = ...,
         reply_markup: Any = ...,
     ) -> Any: ...
 
@@ -134,7 +157,12 @@ class TelegramBotSurface(TelegramSurface):
     # TelegramSurface — send / edit_keyboard / listen_callbacks
     # ─────────────────────────────────────────────────────────────────
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(
+        self,
+        rendered: RenderedAlert,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> int:
         """Send a rendered alert; return Telegram's ``message_id``.
 
         Retries transient failures with exponential backoff. 4xx
@@ -144,7 +172,7 @@ class TelegramBotSurface(TelegramSurface):
         started = time.perf_counter()
         while True:
             try:
-                message = await self._invoke_send(rendered)
+                message = await self._invoke_send(rendered, reply_to_message_id)
             except _RetryableTelegramError as exc:
                 if attempt >= len(self._retry_delays):
                     self._log.error(
@@ -186,6 +214,67 @@ class TelegramBotSurface(TelegramSurface):
                 },
             )
             return int(message.message_id)
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        """Edit an alert body in place — single attempt, no retry loop.
+
+        Edits are non-critical: the poll cycle re-diffs and retries
+        naturally, so a transient failure raises
+        :class:`TelegramDeliveryFailed` immediately instead of burning
+        the send retry budget. Two BadRequest variants are semantic:
+        "message is not modified" is success (identical re-render);
+        "message to edit not found" means the operator deleted the
+        alert → :class:`TelegramMessageGone` (terminal for the watch).
+        """
+        markup = _to_telegram_keyboard(rendered.inline_keyboard)
+        try:
+            if has_photo:
+                await self._bot.edit_message_caption(
+                    self._recipient_chat_id,
+                    message_id,
+                    caption=rendered.text,
+                    parse_mode=rendered.parse_mode,
+                    reply_markup=markup,
+                )
+            else:
+                await self._bot.edit_message_text(
+                    rendered.text,
+                    self._recipient_chat_id,
+                    message_id,
+                    parse_mode=rendered.parse_mode,
+                    reply_markup=markup,
+                )
+        except Exception as exc:
+            lowered = str(exc).lower()
+            if "message is not modified" in lowered:
+                return  # identical content — semantically a successful edit
+            if "message to edit not found" in lowered:
+                self._log.info(
+                    "telegram_edit_target_gone",
+                    extra={"message_id": message_id},
+                )
+                raise TelegramMessageGone(str(exc)) from exc
+            if _is_retryable(exc):
+                self._log.warning(
+                    "telegram_edit_alert_failed",
+                    extra={"error_class": exc.__class__.__name__, "message_id": message_id},
+                )
+                raise TelegramDeliveryFailed(str(exc)) from exc
+            self._log.error(
+                "telegram_edit_alert_config_error",
+                extra={"error_class": exc.__class__.__name__, "message_id": message_id},
+            )
+            raise TelegramConfigError(str(exc)) from exc
+        self._log.info(
+            "telegram_alert_edited",
+            extra={"message_id": message_id, "has_photo": has_photo},
+        )
 
     async def edit_keyboard(
         self,
@@ -427,7 +516,7 @@ class TelegramBotSurface(TelegramSurface):
     # Internals
     # ─────────────────────────────────────────────────────────────────
 
-    async def _invoke_send(self, rendered: RenderedAlert) -> Any:
+    async def _invoke_send(self, rendered: RenderedAlert, reply_to_message_id: int | None) -> Any:
         markup = _to_telegram_keyboard(rendered.inline_keyboard)
         try:
             if rendered.photo_url is not None:
@@ -437,12 +526,14 @@ class TelegramBotSurface(TelegramSurface):
                     caption=rendered.text,
                     parse_mode=rendered.parse_mode,
                     reply_markup=markup,
+                    reply_to_message_id=reply_to_message_id,
                 )
             return await self._bot.send_message(
                 self._recipient_chat_id,
                 text=rendered.text,
                 parse_mode=rendered.parse_mode,
                 reply_markup=markup,
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception as exc:
             if _is_retryable(exc):

@@ -84,6 +84,25 @@ pricing:
   assumed_import_charges_eur: 3.63
 
 # ─────────────────────────────────────────────────────────────────────────
+# alerts — live-updating alerts (edit-alerts-on-state-change)
+# ─────────────────────────────────────────────────────────────────────────
+alerts:
+  # How many days a dispatched alert is watched for state changes
+  # (reserved flips, price drops). The original Telegram message is
+  # edited in place; the watch closes early only if the message was
+  # deleted.
+  watch_days: 7
+  # A price drop edits the alert only when it is at least BOTH this
+  # percentage AND this absolute amount below the last-known price —
+  # sub-threshold movement (and any increase) is tracked silently, so
+  # repricing-bot churn never spams edits.
+  min_price_drop_pct: 1
+  min_price_drop_eur: 0.50
+  # A drop of at least this percentage ALSO sends a short new reply
+  # message (Telegram edits are silent; a big drop deserves a ping).
+  price_drop_ping_pct: 10
+
+# ─────────────────────────────────────────────────────────────────────────
 # telegram — delivery semantics (NFR-I6)
 # ─────────────────────────────────────────────────────────────────────────
 telegram:

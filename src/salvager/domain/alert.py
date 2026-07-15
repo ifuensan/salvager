@@ -167,6 +167,10 @@ class AlertSnapshot(BaseModel):
     phase: Phase
     phase2_max_price_eur: Decimal | None = None
     rendered_at: datetime
+    #: Telegram message id returned by the send, persisted so the alert can
+    #: later be edited in place (edit-alerts-on-state-change). ``None`` only
+    #: for rows dispatched before the feature — those are never watched.
+    telegram_message_id: int | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -449,6 +453,98 @@ def render_phase2_listing_alert(
         parse_mode="MarkdownV2",
         photo_url=photo_url,
         inline_keyboard=[_phase2_button_row(str(snapshot.alert_id))],
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Live alert updates — edit-alerts-on-state-change
+# ─────────────────────────────────────────────────────────────────────────
+
+#: Static banner texts for the non-price transitions. The price-drop banner
+#: is built per-edit (it carries both prices). Locked formats (FR22).
+UPDATE_BANNERS: Final[dict[str, str]] = {
+    "reserved": "🔴 RESERVADO",
+    "available": "🟢 Disponible de nuevo",
+}
+
+
+def update_banner_line(
+    change_kind: str,
+    *,
+    old_price_eur: Decimal | None = None,
+    new_price_eur: Decimal | None = None,
+) -> str:
+    """The single status line prepended to an edited alert body.
+
+    Subsequent updates REPLACE this banner (never stack — history lives
+    in the ``alert_updates`` audit table). ``price_drop`` shows the new
+    price with the last price the operator saw: ``📉 80,00 € (antes
+    95,00 €)``. One escape pass, like the other prose rows.
+    """
+    if change_kind == "price_drop":
+        if old_price_eur is None or new_price_eur is None:
+            raise ValueError("price_drop banner requires both prices")
+        new = _format_price_es(new_price_eur)
+        old = _format_price_es(old_price_eur)
+        return escape_markdown_v2(f"📉 {new} (antes {old})")
+    try:
+        return escape_markdown_v2(UPDATE_BANNERS[change_kind])
+    except KeyError as exc:
+        raise ValueError(f"unknown change_kind: {change_kind!r}") from exc
+
+
+def apply_update_banner(
+    base: RenderedAlert,
+    banner_line: str,
+    keyboard: list[list[InlineButton]] | None,
+) -> RenderedAlert:
+    """Prepend ``banner_line`` to a freshly re-rendered base alert.
+
+    The base comes from the ordinary listing renderers (single source of
+    truth for alert anatomy — Decision 5), so the body always reflects
+    current values; ``keyboard`` is the reconstructed one the message
+    currently deserves and is ALWAYS sent explicitly with an edit.
+    """
+    return base.model_copy(
+        update={
+            "text": f"{banner_line}\n{base.text}",
+            "inline_keyboard": keyboard,
+        }
+    )
+
+
+def phase2_dead_reserved_row(alert_id: str) -> list[InlineButton]:
+    """Non-tappable ``🔴 Reservado`` badge replacing ``✅ Comprar`` when a
+    watched Phase 2 alert's listing is reserved (restored on flip-back).
+    ``noop`` is outside the surface's known-verb set, so a stray tap is
+    dropped silently — same pattern as the in-flight badge."""
+    return [
+        InlineButton(text="🔴 Reservado", callback_data=f"listing:noop:{alert_id}"),
+        InlineButton(text=BUTTON_LABELS["view"], callback_data=f"listing:view:{alert_id}"),
+    ]
+
+
+def render_price_drop_ping(
+    entry_display_name: str,
+    *,
+    old_price_eur: Decimal,
+    new_price_eur: Decimal,
+) -> RenderedAlert:
+    """The short NEW message sent for a big price drop (≥ ping threshold).
+
+    Telegram edits are silent; a large drop is the one transition worth
+    a notification. Sent as a plain text message (no photo, no buttons)
+    — the caller pairs it with the edited original alert.
+    """
+    name = escape_markdown_v2(entry_display_name)
+    drop = escape_markdown_v2(
+        f"📉 Bajada: {_format_price_es(old_price_eur)} → {_format_price_es(new_price_eur)}"
+    )
+    return RenderedAlert(
+        text=f"{drop} — *{name}*",
+        parse_mode="MarkdownV2",
+        photo_url=None,
+        inline_keyboard=None,
     )
 
 

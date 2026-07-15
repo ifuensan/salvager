@@ -140,12 +140,21 @@ class _CrashingTelegram(TelegramSurface):
         self.sends = 0
         self._next_message_id = 1000
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         if self.sends >= self._crash_after:
             raise _SimulatedCrash("kill -9 mid-cycle")
         self.sends += 1
         self._next_message_id += 1
         return self._next_message_id
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
 
     async def edit_keyboard(
         self,
@@ -163,10 +172,19 @@ class _RecordingTelegram(TelegramSurface):
         self.sends: list[RenderedAlert] = []
         self._next_message_id = 2000
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.sends.append(rendered)
         self._next_message_id += 1
         return self._next_message_id
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
 
     async def edit_keyboard(
         self,

@@ -80,9 +80,18 @@ class _RecordingTelegram(TelegramSurface):
     def __init__(self) -> None:
         self.sends: list[RenderedAlert] = []
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.sends.append(rendered)
         return 1000 + len(self.sends)
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
 
     async def edit_keyboard(
         self,

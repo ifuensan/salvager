@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from salvager.config.config_yaml import (
+    AlertsConfig,
     ConfigModel,
     ConfigParseError,
     ConfigValidationError,
@@ -247,3 +248,30 @@ def test_load_config_malformed_yaml_raises_parse_error(tmp_path: Path) -> None:
     err = excinfo.value
     assert err.path == path
     assert err.line > 0
+
+
+def test_alerts_defaults_match_example() -> None:
+    a = AlertsConfig()
+    assert a.watch_days == 7
+    assert a.min_price_drop_pct == Decimal("1")
+    assert a.min_price_drop_eur == Decimal("0.50")
+    assert a.price_drop_ping_pct == Decimal("10")
+
+
+def test_alerts_yaml_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "alerts:\n  watch_days: 14\n  price_drop_ping_pct: 5\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.alerts.watch_days == 14
+    assert config.alerts.price_drop_ping_pct == Decimal("5")
+    assert config.alerts.min_price_drop_eur == Decimal("0.50")  # untouched default
+
+
+def test_alerts_rejects_invalid_values() -> None:
+    with pytest.raises(ValidationError):
+        AlertsConfig(watch_days=0)
+    with pytest.raises(ValidationError):
+        AlertsConfig(min_price_drop_eur=Decimal("-0.01"))

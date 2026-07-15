@@ -32,11 +32,20 @@ class _RecordingTelegram(TelegramSurface):
         self.sends: list[RenderedAlert] = []
         self._fail = fail
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         if self._fail:
             raise TelegramDeliveryFailed("send failed after 3 attempts")
         self.sends.append(rendered)
         return 1000 + len(self.sends)
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
 
     async def edit_keyboard(
         self,
