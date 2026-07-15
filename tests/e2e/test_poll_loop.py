@@ -123,7 +123,7 @@ class _RecordingTelegram(TelegramSurface):
         self.sends: list[RenderedAlert] = []
         self._next_message_id = 1000
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.sends.append(rendered)
         message_id = self._next_message_id
         self._next_message_id += 1

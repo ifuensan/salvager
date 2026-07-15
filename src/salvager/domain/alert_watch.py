@@ -21,6 +21,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from salvager.domain.listing import Marketplace
+
 #: What changed on the watched listing. "available" is the reserved→available
 #: flip-back; sold detection is explicitly out of scope (design.md, Resolved
 #: Question 2).
@@ -34,6 +36,7 @@ class AlertWatch(BaseModel):
 
     alert_id: UUID
     listing_id: str = Field(min_length=1)
+    marketplace: Marketplace
     entry_key: tuple[str, str, str]
     telegram_message_id: int
     last_price_eur: Decimal

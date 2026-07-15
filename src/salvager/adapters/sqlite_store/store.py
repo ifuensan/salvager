@@ -120,15 +120,16 @@ class SqliteStore(Store):
             self._connection.execute(
                 """
                 INSERT OR REPLACE INTO alert_watches (
-                    alert_id, listing_id, entry_manufacturer, entry_model,
-                    entry_ref, telegram_message_id, last_price_eur,
+                    alert_id, listing_id, marketplace, entry_manufacturer,
+                    entry_model, entry_ref, telegram_message_id, last_price_eur,
                     last_is_reserved, watch_until, last_edited_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(watch.alert_id),
                     watch.listing_id,
+                    watch.marketplace,
                     *watch.entry_key,
                     watch.telegram_message_id,
                     str(watch.last_price_eur),
@@ -141,20 +142,23 @@ class SqliteStore(Store):
         async with self._write_lock:
             await asyncio.to_thread(_write)
 
-    async def active_watches(self, entry_key: EntryKey, *, now: datetime) -> list[AlertWatch]:
+    async def active_watches(
+        self, entry_key: EntryKey, *, marketplace: str, now: datetime
+    ) -> list[AlertWatch]:
         iso_now = now.isoformat()
 
         def _read() -> list[AlertWatch]:
             cursor = self._connection.execute(
                 """
-                SELECT alert_id, listing_id, entry_manufacturer, entry_model,
-                       entry_ref, telegram_message_id, last_price_eur,
+                SELECT alert_id, listing_id, marketplace, entry_manufacturer,
+                       entry_model, entry_ref, telegram_message_id, last_price_eur,
                        last_is_reserved, watch_until, last_edited_at
                 FROM alert_watches
                 WHERE entry_manufacturer = ? AND entry_model = ? AND entry_ref = ?
+                  AND marketplace = ?
                   AND watch_until > ?
                 """,
-                (*entry_key, iso_now),
+                (*entry_key, marketplace, iso_now),
             )
             return [_row_to_alert_watch(row) for row in cursor.fetchall()]
 
@@ -214,11 +218,11 @@ class SqliteStore(Store):
         async with self._write_lock:
             return await asyncio.to_thread(_write)
 
-    async def get_last_callback_verb(self, alert_id: UUID) -> str | None:
-        def _read() -> str | None:
+    async def get_last_callback_verb(self, alert_id: UUID) -> tuple[str, datetime] | None:
+        def _read() -> tuple[str, datetime] | None:
             cursor = self._connection.execute(
                 """
-                SELECT verb FROM callbacks
+                SELECT verb, received_at FROM callbacks
                 WHERE alert_id = ?
                 ORDER BY audit_id DESC
                 LIMIT 1
@@ -226,7 +230,9 @@ class SqliteStore(Store):
                 (str(alert_id),),
             )
             row = cursor.fetchone()
-            return str(row[0]) if row is not None else None
+            if row is None:
+                return None
+            return str(row[0]), datetime.fromisoformat(row[1])
 
         return await asyncio.to_thread(_read)
 
@@ -497,6 +503,7 @@ def _row_to_alert_watch(row: sqlite3.Row) -> AlertWatch:
     return AlertWatch(
         alert_id=row["alert_id"],
         listing_id=row["listing_id"],
+        marketplace=row["marketplace"],
         entry_key=(row["entry_manufacturer"], row["entry_model"], row["entry_ref"]),
         telegram_message_id=row["telegram_message_id"],
         last_price_eur=Decimal(row["last_price_eur"]),

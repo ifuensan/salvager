@@ -29,13 +29,19 @@ class TelegramSurface(ABC):
     """Port for the Telegram delivery + callback channel."""
 
     @abstractmethod
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(
+        self,
+        rendered: RenderedAlert,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> int:
         """Deliver a rendered alert and return the Telegram message_id.
 
         The message_id is persisted on the alert_snapshot so callback
         handling and ``edit_keyboard`` can find the originating
-        message later.
-        """
+        message later. ``reply_to_message_id`` threads the message as a
+        Telegram reply (used by the big-drop ping so the notification
+        points back at the edited alert)."""
 
     @abstractmethod
     async def edit_alert(

@@ -447,6 +447,7 @@ def _make_watch(**overrides: object) -> AlertWatch:
     base: dict[str, object] = {
         "alert_id": uuid4(),
         "listing_id": "lst-001",
+        "marketplace": "wallapop",
         "entry_key": ("WD", "Red Plus 4TB", "WD40EFPX"),
         "telegram_message_id": 4711,
         "last_price_eur": Decimal("55.00"),
@@ -488,7 +489,7 @@ async def test_watch_round_trip_and_entry_scoping(migrated_db: Path) -> None:
         await store.create_watch(watch)
         await store.create_watch(other_entry)
 
-        active = await store.active_watches(watch.entry_key, now=_T_WATCH)
+        active = await store.active_watches(watch.entry_key, marketplace="wallapop", now=_T_WATCH)
         assert [w.alert_id for w in active] == [watch.alert_id]
         loaded = active[0]
         assert loaded.last_price_eur == Decimal("55.00")
@@ -507,13 +508,16 @@ async def test_expired_watch_not_active_and_prunable(migrated_db: Path) -> None:
         await store.create_watch(expired)
         await store.create_watch(live)
 
-        active = await store.active_watches(expired.entry_key, now=_T_WATCH)
+        active = await store.active_watches(expired.entry_key, marketplace="wallapop", now=_T_WATCH)
         assert [w.alert_id for w in active] == [live.alert_id]
 
         pruned = await store.prune_expired_watches(now=_T_WATCH)
         assert pruned == 1
         # The live one survives the prune.
-        assert len(await store.active_watches(live.entry_key, now=_T_WATCH)) == 1
+        assert (
+            len(await store.active_watches(live.entry_key, marketplace="wallapop", now=_T_WATCH))
+            == 1
+        )
     finally:
         await store.close()
 
@@ -526,7 +530,9 @@ async def test_advance_watch_with_and_without_edit_timestamp(migrated_db: Path) 
 
         # Silent advance (sub-threshold drop / increase): price moves, no edit stamp.
         await store.advance_watch(watch.alert_id, price_eur=Decimal("54.80"), is_reserved=False)
-        [current] = await store.active_watches(watch.entry_key, now=_T_WATCH)
+        [current] = await store.active_watches(
+            watch.entry_key, marketplace="wallapop", now=_T_WATCH
+        )
         assert current.last_price_eur == Decimal("54.80")
         assert current.last_edited_at is None
 
@@ -537,7 +543,9 @@ async def test_advance_watch_with_and_without_edit_timestamp(migrated_db: Path) 
             is_reserved=True,
             edited_at=_T_WATCH,
         )
-        [current] = await store.active_watches(watch.entry_key, now=_T_WATCH)
+        [current] = await store.active_watches(
+            watch.entry_key, marketplace="wallapop", now=_T_WATCH
+        )
         assert current.last_price_eur == Decimal("48.00")
         assert current.last_is_reserved is True
         assert current.last_edited_at == _T_WATCH
@@ -551,7 +559,9 @@ async def test_close_watch_removes_row(migrated_db: Path) -> None:
         watch = _make_watch()
         await store.create_watch(watch)
         await store.close_watch(watch.alert_id)
-        assert await store.active_watches(watch.entry_key, now=_T_WATCH) == []
+        assert (
+            await store.active_watches(watch.entry_key, marketplace="wallapop", now=_T_WATCH) == []
+        )
     finally:
         await store.close()
 

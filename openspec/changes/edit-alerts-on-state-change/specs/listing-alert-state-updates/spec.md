@@ -97,7 +97,7 @@ Each detected change SHALL produce at most ONE edit attempt per poll cycle; ther
 
 ### Requirement: Phase 2 Keyboards Are Reconstructed Safely On Edit
 
-An edit SHALL send the keyboard the message currently deserves, reconstructed from the `callbacks` table: original phase row when no callback fired, the ack row after view/skip/snooze, and — when the last verb is `buy` (in-flight) — the edit SHALL be SKIPPED entirely (never repaint under a running buy; the diff re-fires next cycle). On reserved, a Phase 2 alert's `✅ Comprar` row SHALL be replaced with a non-tappable `🔴 Reservado` badge; on flip-back the row SHALL be restored. Phase 2 price drops SHALL receive no special keyboard treatment (preflight and reconciliation re-validate price at tap time).
+An edit SHALL send the keyboard the message currently deserves, reconstructed from the `callbacks` table: original phase row when no callback fired, the ack row after view/skip/snooze, and — when the last verb is `buy` and the tap is younger than a bounded suppression window (callbacks are append-only, so the marker MUST age out or a completed buy would suppress edits forever) — the edit SHALL be SKIPPED entirely (never repaint under a running buy; the diff re-fires next cycle). On reserved, a Phase 2 alert's `✅ Comprar` row SHALL be replaced with a non-tappable `🔴 Reservado` badge; on flip-back the row SHALL be restored. Phase 2 price drops SHALL receive no special keyboard treatment (preflight and reconciliation re-validate price at tap time).
 
 #### Scenario: Comprar goes dead on reserved
 
@@ -134,7 +134,7 @@ A price drop ≥ `alerts.price_drop_ping_pct` (default 10 %) SHALL, in addition 
 
 ### Requirement: Every Edit Attempt Is Auditable
 
-Every attempted edit SHALL append a row to the append-only `alert_updates` table (`audit_id`, `alert_id`, `change_kind`, `old_value`, `new_value`, `edited_at`, `edit_ok`, `rendered_text` — the full body sent to Telegram). `audit show` SHALL render an alert's update history alongside the original snapshot so the operator-visible message can be replayed at any point in time. Rows SHALL never be updated or deleted (NFR-S4).
+Every attempted edit SHALL append a row to the append-only `alert_updates` table (`audit_id`, `alert_id`, `change_kind`, `old_value`, `new_value`, `edited_at`, `edit_ok`, `rendered_text` — the full body sent to Telegram). `audit show --id <audit-id>` SHALL render an alert's update history alongside the original snapshot so the operator-visible message can be replayed at any point in time. Rows SHALL never be updated or deleted (NFR-S4).
 
 #### Scenario: Audit row on success and failure alike
 
@@ -143,5 +143,5 @@ Every attempted edit SHALL append a row to the append-only `alert_updates` table
 
 #### Scenario: audit show replays the history
 
-- **WHEN** the operator runs `audit show <alert-id>` for an alert edited twice
+- **WHEN** the operator runs `audit show --id <audit-id>` for an alert edited twice
 - **THEN** the output includes both updates in order with their rendered bodies

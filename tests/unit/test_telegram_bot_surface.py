@@ -62,6 +62,7 @@ class _FakeBot:
         *,
         parse_mode: str | None = None,
         reply_markup: Any = None,
+        reply_to_message_id: int | None = None,
     ) -> _FakeMessage:
         self.send_message_calls.append(
             {
@@ -69,6 +70,7 @@ class _FakeBot:
                 "text": text,
                 "parse_mode": parse_mode,
                 "reply_markup": reply_markup,
+                "reply_to_message_id": reply_to_message_id,
             }
         )
         self._maybe_raise()
@@ -82,6 +84,7 @@ class _FakeBot:
         caption: str | None = None,
         parse_mode: str | None = None,
         reply_markup: Any = None,
+        reply_to_message_id: int | None = None,
     ) -> _FakeMessage:
         self.send_photo_calls.append(
             {
@@ -90,6 +93,7 @@ class _FakeBot:
                 "caption": caption,
                 "parse_mode": parse_mode,
                 "reply_markup": reply_markup,
+                "reply_to_message_id": reply_to_message_id,
             }
         )
         self._maybe_raise()
@@ -794,3 +798,14 @@ async def test_edit_alert_non_retryable_maps_to_config_error() -> None:
 
     with pytest.raises(TelegramConfigError):
         await surface.edit_alert(4711, _rendered(), has_photo=False)
+
+
+async def test_send_threads_reply_to_message_id() -> None:
+    """The big-drop ping is a Telegram reply pointing at the edited alert."""
+    bot = _FakeBot()
+    surface, _ = _build_surface(bot)
+
+    await surface.send(_rendered(with_photo=False), reply_to_message_id=4711)
+
+    [call] = bot.send_message_calls
+    assert call["reply_to_message_id"] == 4711

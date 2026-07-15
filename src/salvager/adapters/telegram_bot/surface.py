@@ -78,6 +78,7 @@ class TelegramBotProtocol(Protocol):
         *,
         parse_mode: str | None = ...,
         reply_markup: Any = ...,
+        reply_to_message_id: int | None = ...,
     ) -> Any: ...
 
     async def send_photo(
@@ -88,6 +89,7 @@ class TelegramBotProtocol(Protocol):
         caption: str | None = ...,
         parse_mode: str | None = ...,
         reply_markup: Any = ...,
+        reply_to_message_id: int | None = ...,
     ) -> Any: ...
 
     async def edit_message_reply_markup(
@@ -155,7 +157,12 @@ class TelegramBotSurface(TelegramSurface):
     # TelegramSurface — send / edit_keyboard / listen_callbacks
     # ─────────────────────────────────────────────────────────────────
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(
+        self,
+        rendered: RenderedAlert,
+        *,
+        reply_to_message_id: int | None = None,
+    ) -> int:
         """Send a rendered alert; return Telegram's ``message_id``.
 
         Retries transient failures with exponential backoff. 4xx
@@ -165,7 +172,7 @@ class TelegramBotSurface(TelegramSurface):
         started = time.perf_counter()
         while True:
             try:
-                message = await self._invoke_send(rendered)
+                message = await self._invoke_send(rendered, reply_to_message_id)
             except _RetryableTelegramError as exc:
                 if attempt >= len(self._retry_delays):
                     self._log.error(
@@ -509,7 +516,7 @@ class TelegramBotSurface(TelegramSurface):
     # Internals
     # ─────────────────────────────────────────────────────────────────
 
-    async def _invoke_send(self, rendered: RenderedAlert) -> Any:
+    async def _invoke_send(self, rendered: RenderedAlert, reply_to_message_id: int | None) -> Any:
         markup = _to_telegram_keyboard(rendered.inline_keyboard)
         try:
             if rendered.photo_url is not None:
@@ -519,12 +526,14 @@ class TelegramBotSurface(TelegramSurface):
                     caption=rendered.text,
                     parse_mode=rendered.parse_mode,
                     reply_markup=markup,
+                    reply_to_message_id=reply_to_message_id,
                 )
             return await self._bot.send_message(
                 self._recipient_chat_id,
                 text=rendered.text,
                 parse_mode=rendered.parse_mode,
                 reply_markup=markup,
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception as exc:
             if _is_retryable(exc):

@@ -223,6 +223,7 @@ async def run_poll_cycle(
         await process_entry_watches(
             entry,
             listings_by_id,
+            marketplace=marketplace,
             store=store,
             telegram=telegram,
             policy=alerts_policy,
@@ -680,6 +681,7 @@ async def _dispatch_alert(
             AlertWatch(
                 alert_id=snapshot.alert_id,
                 listing_id=listing.listing_id,
+                marketplace=listing.marketplace,
                 entry_key=entry.entry_key,
                 telegram_message_id=message_id,
                 last_price_eur=listing.price_eur,

@@ -24,7 +24,7 @@ succeeded, so a failure re-fires the same diff next cycle (Decision 10).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from salvager.domain.alert import (
@@ -65,6 +65,10 @@ class AlertUpdatePolicy:
     min_price_drop_pct: Decimal = Decimal("1")
     min_price_drop_eur: Decimal = Decimal("0.50")
     price_drop_ping_pct: Decimal = Decimal("10")
+    #: How long a `buy` tap suppresses edits. Callbacks are append-only, so
+    #: without an age-out a completed buy would suppress edits forever
+    #: (CodeRabbit, PR #41); real buys resolve in minutes.
+    buy_suppression_minutes: int = 30
 
 
 DEFAULT_ALERT_UPDATE_POLICY = AlertUpdatePolicy()
@@ -129,6 +133,7 @@ async def process_entry_watches(
     entry: WishlistEntry,
     listings_by_id: dict[str, Listing],
     *,
+    marketplace: str,
     store: Store,
     telegram: TelegramSurface,
     policy: AlertUpdatePolicy,
@@ -140,7 +145,7 @@ async def process_entry_watches(
     """Diff the entry's active watches against this cycle's fetch and edit
     changed alerts. Never raises — edits are strictly best-effort."""
     try:
-        watches = await store.active_watches(entry.entry_key, now=now)
+        watches = await store.active_watches(entry.entry_key, marketplace=marketplace, now=now)
     except Exception as exc:
         log.exception(  # type: ignore[attr-defined]
             "alert_watch_read_failed",
@@ -199,14 +204,21 @@ async def _process_one_watch(
             )
         return
 
-    last_verb = await store.get_last_callback_verb(watch.alert_id)
+    last_callback = await store.get_last_callback_verb(watch.alert_id)
+    last_verb = last_callback[0] if last_callback is not None else None
     if last_verb == "buy":
-        # Never repaint under a running buy — the diff re-fires next cycle.
-        log.info(  # type: ignore[attr-defined]
-            "alert_update_skipped_buy_in_flight",
-            extra={"alert_id": str(watch.alert_id), "change_kind": diff.change},
-        )
-        return
+        # Never repaint under a RUNNING buy — but callbacks are append-only,
+        # so the marker must age out or a completed buy would suppress edits
+        # forever. Real buys resolve in minutes; after the window the diff
+        # proceeds (a bought listing shows as reserved → dead badge, correct).
+        tapped_at = last_callback[1] if last_callback is not None else now
+        if (now - tapped_at) <= timedelta(minutes=policy.buy_suppression_minutes):
+            log.info(  # type: ignore[attr-defined]
+                "alert_update_skipped_buy_in_flight",
+                extra={"alert_id": str(watch.alert_id), "change_kind": diff.change},
+            )
+            return
+        last_verb = None  # aged out — reconstruct the phase keyboard
 
     snapshot = await store.get_alert_snapshot_by_alert_id(watch.alert_id)
     if snapshot is None:
@@ -239,7 +251,8 @@ async def _process_one_watch(
                     snapshot.entry_display_name,
                     old_price_eur=watch.last_price_eur,
                     new_price_eur=listing.price_eur,
-                )
+                ),
+                reply_to_message_id=watch.telegram_message_id,
             )
         edit_ok = True
     except TelegramMessageGone:

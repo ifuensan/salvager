@@ -173,7 +173,7 @@ class _FakeStore(Store):
         self.meta: dict[str, str] = {}
         self.watches: dict[UUID, AlertWatch] = {}
         self.alert_updates: list[AlertUpdate] = []
-        self.last_callback_verbs: dict[UUID, str] = {}
+        self.last_callback_verbs: dict[UUID, tuple[str, datetime]] = {}
 
     async def is_seen(self, listing_id: str, entry_key: EntryKey) -> bool:
         return (listing_id, entry_key) in self.seen
@@ -227,15 +227,19 @@ class _FakeStore(Store):
     async def record_transaction(self, transaction: TransactionAudit) -> None:
         raise AssertionError("Phase 2 audit should not run in Phase 1 cycle")
 
-    async def get_last_callback_verb(self, alert_id: UUID) -> str | None:
+    async def get_last_callback_verb(self, alert_id: UUID) -> tuple[str, datetime] | None:
         return self.last_callback_verbs.get(alert_id)
 
     async def create_watch(self, watch: AlertWatch) -> None:
         self.watches[watch.alert_id] = watch
 
-    async def active_watches(self, entry_key: EntryKey, *, now: datetime) -> list[AlertWatch]:
+    async def active_watches(
+        self, entry_key: EntryKey, *, marketplace: str, now: datetime
+    ) -> list[AlertWatch]:
         return [
-            w for w in self.watches.values() if w.entry_key == entry_key and w.watch_until > now
+            w
+            for w in self.watches.values()
+            if w.entry_key == entry_key and w.marketplace == marketplace and w.watch_until > now
         ]
 
     async def advance_watch(
@@ -274,13 +278,15 @@ class _FakeTelegram(TelegramSurface):
     ) -> None:
         self.sends: list[RenderedAlert] = []
         self.edits: list[tuple[int, RenderedAlert, bool]] = []
+        self.send_replies: list[int | None] = []
         self.edit_response: BaseException | None = None
         self._fixed_response = send_response
         self._stream = list(send_responses) if send_responses else None
         self._send_counter = 0
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.sends.append(rendered)
+        self.send_replies.append(reply_to_message_id)
         if self._stream is not None:
             response = self._stream.pop(0)
             if isinstance(response, BaseException):
@@ -1253,6 +1259,7 @@ def _watched_setup(
     watch = AlertWatch(
         alert_id=_FIXED_UUID,
         listing_id="watched1",
+        marketplace="wallapop",
         entry_key=entry.entry_key,
         telegram_message_id=4711,
         last_price_eur=price,
@@ -1370,9 +1377,10 @@ async def test_big_drop_edits_and_sends_ping() -> None:
     [(_, rendered, _)] = telegram.edits
     assert rendered.text.splitlines()[0].startswith("📉")
     assert "80,00" in rendered.text.splitlines()[0]
-    # The ping went out as a NEW message.
+    # The ping went out as a NEW message, threaded as a reply to the alert.
     [ping] = telegram.sends
     assert "Bajada" in ping.text
+    assert telegram.send_replies == [4711]
     [update] = store.alert_updates
     assert update.change_kind == "price_drop"
     assert update.old_value == "100.00"
@@ -1459,7 +1467,7 @@ async def test_deleted_message_closes_watch_silently() -> None:
 
 async def test_buy_in_flight_skips_edit_entirely() -> None:
     entry, store, _, _ = _watched_setup(phase="phase2")
-    store.last_callback_verbs[_FIXED_UUID] = "buy"
+    store.last_callback_verbs[_FIXED_UUID] = ("buy", _T0 - timedelta(minutes=5))
     telegram = _FakeTelegram()
 
     await run_poll_cycle(
@@ -1501,3 +1509,46 @@ async def test_dispatch_persists_message_id_and_creates_watch() -> None:
     assert watch.listing_id == "abc123"
     assert watch.telegram_message_id == 888
     assert watch.watch_until == _T0 + timedelta(days=7)  # default policy
+
+
+async def test_aged_out_buy_tap_no_longer_suppresses_edits() -> None:
+    """Callbacks are append-only: a completed buy would suppress edits
+    forever without the age-out window (CodeRabbit, PR #41)."""
+    entry, store, _, _ = _watched_setup(phase="phase2")
+    store.last_callback_verbs[_FIXED_UUID] = ("buy", _T0 - timedelta(hours=2))
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[_listing("watched1", is_reserved=True)]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    [(_, rendered, _)] = telegram.edits  # edit proceeded
+    assert rendered.text.splitlines()[0] == "🔴 RESERVADO"
+
+
+async def test_watches_are_scoped_to_their_marketplace() -> None:
+    """listing_ids are only unique per marketplace — a wallapop cycle must
+    never touch an eBay watch (CodeRabbit, PR #41)."""
+    entry, store, _, watch = _watched_setup()
+    store.watches[_FIXED_UUID] = watch.model_copy(update={"marketplace": "ebay"})
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[_listing("watched1", is_reserved=True)]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    assert telegram.edits == []  # the eBay watch was invisible to this cycle

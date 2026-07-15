@@ -24,6 +24,7 @@ ALTER TABLE alert_snapshots ADD COLUMN telegram_message_id INTEGER;
 CREATE TABLE IF NOT EXISTS alert_watches (
     alert_id             TEXT PRIMARY KEY,            -- UUID, joins alert_snapshots.alert_id
     listing_id           TEXT NOT NULL,
+    marketplace          TEXT NOT NULL,           -- scopes the diff join: listing_ids are only unique per marketplace
     entry_manufacturer   TEXT NOT NULL,
     entry_model          TEXT NOT NULL,
     entry_ref            TEXT NOT NULL,

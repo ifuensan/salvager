@@ -116,13 +116,14 @@ class Store(ABC):
         """Append a callback-tap row to the audit log (NFR-S4)."""
 
     @abstractmethod
-    async def get_last_callback_verb(self, alert_id: UUID) -> str | None:
-        """The most recent callback verb for an alert, or None if untapped.
+    async def get_last_callback_verb(self, alert_id: UUID) -> tuple[str, datetime] | None:
+        """The most recent callback (verb, occurred_at), or None if untapped.
 
-        Alert edits use this to reconstruct the keyboard the message
-        currently deserves (original row / ack row / in-flight badge) —
-        an edit without ``reply_markup`` would drop the buttons
-        (edit-alerts-on-state-change)."""
+        Alert edits use the verb to reconstruct the keyboard the message
+        currently deserves (original row / ack row / in-flight badge),
+        and the timestamp to AGE OUT the buy-in-flight suppression —
+        callbacks are append-only, so a completed buy would otherwise
+        suppress edits forever (edit-alerts-on-state-change)."""
 
     # ─────────────────────────────────────────────────────────────────
     # Alert watches — MUTABLE state (edit-alerts-on-state-change).
@@ -137,8 +138,14 @@ class Store(ABC):
         """Persist a new watch row for a just-dispatched alert."""
 
     @abstractmethod
-    async def active_watches(self, entry_key: EntryKey, *, now: datetime) -> list[AlertWatch]:
-        """All watches for ``entry_key`` with ``watch_until > now``."""
+    async def active_watches(
+        self, entry_key: EntryKey, *, marketplace: str, now: datetime
+    ) -> list[AlertWatch]:
+        """Live watches for ``entry_key`` on ``marketplace``.
+
+        Scoped by marketplace because listing_ids are only unique within
+        one marketplace — a cross-marketplace id collision must never
+        edit the wrong alert."""
 
     @abstractmethod
     async def advance_watch(

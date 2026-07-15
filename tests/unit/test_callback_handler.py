@@ -135,17 +135,19 @@ class _FakeStore(Store):
     async def get_all_meta(self) -> dict[str, str]:
         return {}
 
-    async def get_last_callback_verb(self, alert_id: UUID) -> str | None:
+    async def get_last_callback_verb(self, alert_id: UUID) -> tuple[str, datetime] | None:
         for callback in reversed(self.callbacks):
             if callback.alert_id == alert_id:
-                return callback.verb
+                return callback.verb, callback.occurred_at
         return None
 
     # Alert watches / updates — not exercised here.
     async def create_watch(self, watch: AlertWatch) -> None:
         return None
 
-    async def active_watches(self, entry_key: EntryKey, *, now: datetime) -> list[AlertWatch]:
+    async def active_watches(
+        self, entry_key: EntryKey, *, marketplace: str, now: datetime
+    ) -> list[AlertWatch]:
         return []
 
     async def advance_watch(
@@ -185,7 +187,7 @@ class _FakeSurface(TelegramSurface):
         self.edits: list[tuple[int, list[list[InlineButton]] | None]] = []
         self.send_calls: list[RenderedAlert] = []
 
-    async def send(self, rendered: RenderedAlert) -> int:
+    async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.send_calls.append(rendered)
         return 999
 

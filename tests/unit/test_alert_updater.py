@@ -50,6 +50,7 @@ def _watch(**overrides: object) -> AlertWatch:
     base: dict[str, object] = {
         "alert_id": uuid4(),
         "listing_id": "lst-1",
+        "marketplace": "wallapop",
         "entry_key": ("WD", "Red Plus 4TB", "WD40EFPX"),
         "telegram_message_id": 4711,
         "last_price_eur": Decimal("100.00"),
