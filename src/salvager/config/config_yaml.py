@@ -125,6 +125,26 @@ class PricingConfig(BaseModel):
     assumed_import_charges_eur: Annotated[Decimal, Field(ge=0)] = Decimal("3.63")
 
 
+class AlertsConfig(BaseModel):
+    """Live-updating alert knobs (edit-alerts-on-state-change).
+
+    Dispatched alerts are watched for ``watch_days``; a watched listing
+    that flips reserved (either direction) or drops its price edits the
+    original Telegram message in place. A drop edits only when ≥
+    ``min_price_drop_pct`` AND ≥ ``min_price_drop_eur`` (anti-churn
+    against repricing bots; sub-threshold movement advances the watch
+    silently). A drop ≥ ``price_drop_ping_pct`` additionally sends a
+    short new reply message — Telegram edits are silent and a big drop
+    is the one transition worth a notification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    watch_days: Annotated[int, Field(ge=1)] = 7
+    min_price_drop_pct: Annotated[Decimal, Field(ge=0)] = Decimal("1")
+    min_price_drop_eur: Annotated[Decimal, Field(ge=0)] = Decimal("0.50")
+    price_drop_ping_pct: Annotated[Decimal, Field(ge=0)] = Decimal("10")
+
+
 class LoggingConfig(BaseModel):
     """Structured-log threshold + output format (NFR-O1, NFR-O4).
 
@@ -181,6 +201,7 @@ class ConfigModel(BaseModel):
     ebay: EbayConfig = Field(default_factory=EbayConfig)
     wallapop: WallapopConfig = Field(default_factory=WallapopConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)

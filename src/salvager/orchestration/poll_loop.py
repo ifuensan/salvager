@@ -44,7 +44,7 @@ import time
 import uuid as uuid_module
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final
 from uuid import UUID
@@ -55,6 +55,7 @@ from salvager.domain.alert import (
     render_phase1_listing_alert,
     render_phase2_listing_alert,
 )
+from salvager.domain.alert_watch import AlertWatch
 from salvager.domain.comps import CompSummary, summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing, Marketplace, SearchQuery
@@ -70,6 +71,11 @@ from salvager.interfaces.page_fetcher import PageFetcher
 from salvager.interfaces.store import Store
 from salvager.interfaces.telegram_surface import TelegramSurface
 from salvager.observability.logging import get_logger
+from salvager.orchestration.alert_updater import (
+    DEFAULT_ALERT_UPDATE_POLICY,
+    AlertUpdatePolicy,
+    process_entry_watches,
+)
 from salvager.orchestration.phase2_preflight import Phase2Preflight
 
 #: NFR-P3: per-marketplace cycles cap concurrent LLM evaluations at 8.
@@ -117,6 +123,7 @@ async def run_poll_cycle(
     store: Store,
     telegram: TelegramSurface,
     phase2_preflight: Phase2Preflight | None = None,
+    alerts_policy: AlertUpdatePolicy = DEFAULT_ALERT_UPDATE_POLICY,
     max_concurrent_evaluations: int = DEFAULT_MAX_CONCURRENT_EVALUATIONS,
     clock: Callable[[], datetime] = _utc_now,
     new_alert_id: Callable[[], UUID] = uuid_module.uuid4,
@@ -147,6 +154,16 @@ async def run_poll_cycle(
         if phase2_preflight is not None
         else DEFAULT_ASSUMED_IMPORT_CHARGES_EUR
     )
+
+    # Lazy watch pruning: one cheap DELETE per cycle keeps the per-entry
+    # diff join bounded (edit-alerts-on-state-change). Best-effort.
+    try:
+        await store.prune_expired_watches(now=now)
+    except Exception as exc:
+        log.warning(
+            "alert_watch_prune_failed",
+            extra={"marketplace": marketplace, "error_class": exc.__class__.__name__},
+        )
 
     for entry in wishlist.entries:
         snooze_until = await store.get_snooze_until(entry.entry_key)
@@ -198,6 +215,23 @@ async def run_poll_cycle(
         listings = list(listings_by_id.values())
 
         summary.result_count += len(listings)
+
+        # Live alert updates: diff already-alerted listings against their
+        # watches BEFORE the dedup filter throws them away — the state
+        # signal is free in this cycle's fetch (edit-alerts-on-state-change).
+        # Best-effort by contract: never raises, never blocks the pipeline.
+        await process_entry_watches(
+            entry,
+            listings_by_id,
+            store=store,
+            telegram=telegram,
+            policy=alerts_policy,
+            assumed_shipping_eur=shipping_buffer,
+            assumed_import_charges_eur=import_buffer,
+            now=now,
+            log=log,
+        )
+
         candidates = await _filter_unseen(listings, entry, store)
         summary.new_count += len(candidates)
 
@@ -266,6 +300,7 @@ async def run_poll_cycle(
                     store=store,
                     phase2_preflight=phase2_preflight,
                     comp_summary=comp_summary,
+                    alerts_policy=alerts_policy,
                     new_alert_id=new_alert_id,
                     clock=clock,
                     log=log,
@@ -557,6 +592,7 @@ async def _dispatch_alert(
     store: Store,
     phase2_preflight: Phase2Preflight | None,
     comp_summary: CompSummary | None,
+    alerts_policy: AlertUpdatePolicy = DEFAULT_ALERT_UPDATE_POLICY,
     new_alert_id: Callable[[], UUID],
     clock: Callable[[], datetime],
     log: object,
@@ -621,7 +657,7 @@ async def _dispatch_alert(
             if phase == "phase2" and phase2_max_price_eur is not None
             else render_phase1_listing_alert(snapshot, comp_summary=comp_summary, buyer_cost=cost)
         )
-        _message_id = await telegram.send(rendered)
+        message_id = await telegram.send(rendered)
     except Exception as exc:
         log.error(  # type: ignore[attr-defined]
             "alert_dispatch_failed",
@@ -633,9 +669,24 @@ async def _dispatch_alert(
         )
         return False
 
+    # The send returns before the insert, so the snapshot row is born
+    # complete — append-only preserved (edit-alerts-on-state-change).
+    snapshot = snapshot.model_copy(update={"telegram_message_id": message_id})
+
     try:
         await store.record_alert_snapshot(snapshot)
         await store.record_seen(listing, entry.entry_key, match_fired=True)
+        await store.create_watch(
+            AlertWatch(
+                alert_id=snapshot.alert_id,
+                listing_id=listing.listing_id,
+                entry_key=entry.entry_key,
+                telegram_message_id=message_id,
+                last_price_eur=listing.price_eur,
+                last_is_reserved=listing.is_reserved,
+                watch_until=snapshot.rendered_at + timedelta(days=alerts_policy.watch_days),
+            )
+        )
     except Exception as exc:
         log.error(  # type: ignore[attr-defined]
             "alert_persist_failed",

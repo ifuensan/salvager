@@ -95,10 +95,11 @@ def test_scheduler_task_alias_exposed() -> None:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def test_telegram_surface_declares_three_methods() -> None:
+def test_telegram_surface_declares_four_methods() -> None:
     methods = TelegramSurface.__abstractmethods__
-    assert methods == {"send", "edit_keyboard", "listen_callbacks"}
+    assert methods == {"send", "edit_alert", "edit_keyboard", "listen_callbacks"}
     assert inspect.iscoroutinefunction(TelegramSurface.send)
+    assert inspect.iscoroutinefunction(TelegramSurface.edit_alert)
     assert inspect.iscoroutinefunction(TelegramSurface.edit_keyboard)
     assert inspect.iscoroutinefunction(TelegramSurface.listen_callbacks)
 
@@ -178,6 +179,7 @@ _ALLOWED_INTERFACE_TOP_LEVELS = frozenset(
         "abc",
         "collections",
         "datetime",
+        "decimal",
         "typing",
         "uuid",
         # blessed third-party

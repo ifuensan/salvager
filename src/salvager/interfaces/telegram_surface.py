@@ -38,6 +38,28 @@ class TelegramSurface(ABC):
         """
 
     @abstractmethod
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        """Edit a previously sent alert's body in place.
+
+        ``has_photo`` selects Telegram's ``editMessageCaption`` (photo
+        alerts — the body is the caption) vs ``editMessageText``; the
+        caller derives it from the stored snapshot's ``photo_urls``.
+        ``rendered.inline_keyboard`` is ALWAYS sent with the edit —
+        Telegram drops the current keyboard otherwise.
+
+        Single attempt (no in-cycle retry — the next poll cycle
+        re-diffs and retries). "message is not modified" is a silent
+        no-op success; "message to edit not found" raises
+        ``TelegramMessageGone`` (terminal: the watch closes).
+        """
+
+    @abstractmethod
     async def edit_keyboard(
         self,
         message_id: int,

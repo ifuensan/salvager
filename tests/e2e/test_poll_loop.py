@@ -129,6 +129,15 @@ class _RecordingTelegram(TelegramSurface):
         self._next_message_id += 1
         return message_id
 
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
+
     async def edit_keyboard(
         self,
         message_id: int,

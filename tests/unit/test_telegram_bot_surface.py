@@ -17,6 +17,7 @@ from salvager.domain.alert import InlineButton, RenderedAlert
 from salvager.domain.errors import (
     TelegramConfigError,
     TelegramDeliveryFailed,
+    TelegramMessageGone,
 )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -105,6 +106,48 @@ class _FakeBot:
             {
                 "chat_id": chat_id,
                 "message_id": message_id,
+                "reply_markup": reply_markup,
+            }
+        )
+        self._maybe_raise()
+
+    async def edit_message_caption(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        reply_markup: Any = None,
+    ) -> None:
+        self.edit_caption_calls: list[dict[str, Any]] = getattr(self, "edit_caption_calls", [])
+        self.edit_caption_calls.append(
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "caption": caption,
+                "parse_mode": parse_mode,
+                "reply_markup": reply_markup,
+            }
+        )
+        self._maybe_raise()
+
+    async def edit_message_text(
+        self,
+        text: str,
+        chat_id: int | None = None,
+        message_id: int | None = None,
+        *,
+        parse_mode: str | None = None,
+        reply_markup: Any = None,
+    ) -> None:
+        self.edit_text_calls: list[dict[str, Any]] = getattr(self, "edit_text_calls", [])
+        self.edit_text_calls.append(
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "parse_mode": parse_mode,
                 "reply_markup": reply_markup,
             }
         )
@@ -682,3 +725,72 @@ async def test_listen_callbacks_raises_config_error_on_non_retryable_failure() -
 
     with pytest.raises(TelegramConfigError):
         await surface.listen_callbacks(_handler)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# edit_alert — body edits (edit-alerts-on-state-change)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_edit_alert_photo_branch_uses_edit_message_caption() -> None:
+    bot = _FakeBot()
+    surface, _ = _build_surface(bot)
+    rendered = _rendered(with_photo=True)
+
+    await surface.edit_alert(4711, rendered, has_photo=True)
+
+    [call] = bot.edit_caption_calls
+    assert call["message_id"] == 4711
+    assert call["caption"] == rendered.text
+    assert call["reply_markup"] is not None  # keyboard always re-sent explicitly
+    assert not getattr(bot, "edit_text_calls", [])
+
+
+async def test_edit_alert_text_branch_uses_edit_message_text() -> None:
+    bot = _FakeBot()
+    surface, _ = _build_surface(bot)
+    rendered = _rendered(with_photo=False)
+
+    await surface.edit_alert(4711, rendered, has_photo=False)
+
+    [call] = bot.edit_text_calls
+    assert call["text"] == rendered.text
+    assert call["reply_markup"] is not None
+    assert not getattr(bot, "edit_caption_calls", [])
+
+
+async def test_edit_alert_not_modified_is_silent_success() -> None:
+    bot = _FakeBot(failures=[_BadRequest("Message is not modified")])
+    surface, _ = _build_surface(bot)
+
+    # No exception — identical re-render counts as a successful edit.
+    await surface.edit_alert(4711, _rendered(), has_photo=True)
+
+
+async def test_edit_alert_message_gone_raises_terminal_error() -> None:
+    bot = _FakeBot(failures=[_BadRequest("Message to edit not found")])
+    surface, _ = _build_surface(bot)
+
+    with pytest.raises(TelegramMessageGone):
+        await surface.edit_alert(4711, _rendered(), has_photo=True)
+
+
+async def test_edit_alert_transient_failure_is_single_attempt() -> None:
+    """No in-cycle retry: a transient failure raises immediately (the next
+    poll cycle re-diffs and retries) and consumes exactly one bot call."""
+    bot = _FakeBot(failures=[_NetworkError("temporary")])
+    surface, sleeps = _build_surface(bot)
+
+    with pytest.raises(TelegramDeliveryFailed):
+        await surface.edit_alert(4711, _rendered(), has_photo=True)
+
+    assert len(bot.edit_caption_calls) == 1  # exactly one attempt
+    assert sleeps == []  # and no retry sleeps
+
+
+async def test_edit_alert_non_retryable_maps_to_config_error() -> None:
+    bot = _FakeBot(failures=[_BadRequest("chat not found")])
+    surface, _ = _build_surface(bot)
+
+    with pytest.raises(TelegramConfigError):
+        await surface.edit_alert(4711, _rendered(), has_photo=False)

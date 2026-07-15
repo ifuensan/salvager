@@ -18,6 +18,7 @@ from uuid import UUID
 import pytest
 
 from salvager.domain.alert import AlertSnapshot, InlineButton, RenderedAlert
+from salvager.domain.alert_watch import AlertUpdate, AlertWatch
 from salvager.domain.audit import CallbackAudit, TapEventAudit, TransactionAudit
 from salvager.domain.errors import (
     LlmEvaluationError,
@@ -170,6 +171,9 @@ class _FakeStore(Store):
         self.match_fired_calls: list[tuple[str, bool]] = []
         self.record_alert_calls: list[AlertSnapshot] = []
         self.meta: dict[str, str] = {}
+        self.watches: dict[UUID, AlertWatch] = {}
+        self.alert_updates: list[AlertUpdate] = []
+        self.last_callback_verbs: dict[UUID, str] = {}
 
     async def is_seen(self, listing_id: str, entry_key: EntryKey) -> bool:
         return (listing_id, entry_key) in self.seen
@@ -223,14 +227,57 @@ class _FakeStore(Store):
     async def record_transaction(self, transaction: TransactionAudit) -> None:
         raise AssertionError("Phase 2 audit should not run in Phase 1 cycle")
 
+    async def get_last_callback_verb(self, alert_id: UUID) -> str | None:
+        return self.last_callback_verbs.get(alert_id)
+
+    async def create_watch(self, watch: AlertWatch) -> None:
+        self.watches[watch.alert_id] = watch
+
+    async def active_watches(self, entry_key: EntryKey, *, now: datetime) -> list[AlertWatch]:
+        return [
+            w for w in self.watches.values() if w.entry_key == entry_key and w.watch_until > now
+        ]
+
+    async def advance_watch(
+        self,
+        alert_id: UUID,
+        *,
+        price_eur: Decimal,
+        is_reserved: bool,
+        edited_at: datetime | None = None,
+    ) -> None:
+        watch = self.watches[alert_id]
+        update: dict[str, object] = {"last_price_eur": price_eur, "last_is_reserved": is_reserved}
+        if edited_at is not None:
+            update["last_edited_at"] = edited_at
+        self.watches[alert_id] = watch.model_copy(update=update)
+
+    async def close_watch(self, alert_id: UUID) -> None:
+        self.watches.pop(alert_id, None)
+
+    async def prune_expired_watches(self, *, now: datetime) -> int:
+        expired = [k for k, w in self.watches.items() if w.watch_until <= now]
+        for key in expired:
+            del self.watches[key]
+        return len(expired)
+
+    async def record_alert_update(self, update: AlertUpdate) -> None:
+        self.alert_updates.append(update)
+
+    async def get_alert_updates(self, alert_id: UUID) -> list[AlertUpdate]:
+        return [u for u in self.alert_updates if u.alert_id == alert_id]
+
 
 class _FakeTelegram(TelegramSurface):
     def __init__(
         self, *, send_response: int | BaseException = 1, send_responses: list[Any] | None = None
     ) -> None:
         self.sends: list[RenderedAlert] = []
+        self.edits: list[tuple[int, RenderedAlert, bool]] = []
+        self.edit_response: BaseException | None = None
         self._fixed_response = send_response
         self._stream = list(send_responses) if send_responses else None
+        self._send_counter = 0
 
     async def send(self, rendered: RenderedAlert) -> int:
         self.sends.append(rendered)
@@ -242,6 +289,17 @@ class _FakeTelegram(TelegramSurface):
         if isinstance(self._fixed_response, BaseException):
             raise self._fixed_response
         return self._fixed_response
+
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        if self.edit_response is not None:
+            raise self.edit_response
+        self.edits.append((message_id, rendered, has_photo))
 
     async def edit_keyboard(
         self,
@@ -1158,3 +1216,288 @@ async def test_all_keywords_failing_marks_entry_failed() -> None:
 
     assert summary.errors == 1
     assert summary.failed_entries == [entry.display_name]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Live alert updates — edit-alerts-on-state-change
+# ─────────────────────────────────────────────────────────────────────────
+
+from decimal import Decimal as _D  # noqa: E402
+
+from salvager.domain.errors import TelegramMessageGone  # noqa: E402
+
+
+def _watched_setup(
+    *,
+    price: Decimal = Decimal("100.00"),
+    reserved: bool = False,
+    phase: str = "phase1",
+) -> tuple[Any, _FakeStore, AlertSnapshot, AlertWatch]:
+    """An entry + store pre-seeded with an already-alerted, watched listing."""
+    entry = _entry(max_price_solo=Decimal("500.00"))
+    store = _FakeStore()
+    listing = _listing("watched1", price=price)
+    snapshot = AlertSnapshot(
+        alert_id=_FIXED_UUID,
+        entry_key=entry.entry_key,
+        entry_display_name=entry.display_name,
+        listing=listing,
+        evaluation=_evaluation("watched1"),
+        phase=phase,  # type: ignore[arg-type]
+        phase2_max_price_eur=_D("400.00") if phase == "phase2" else None,
+        rendered_at=_T0,
+        telegram_message_id=4711,
+    )
+    store.snapshots.append(snapshot)
+    store.seen.add(("watched1", entry.entry_key))
+    watch = AlertWatch(
+        alert_id=_FIXED_UUID,
+        listing_id="watched1",
+        entry_key=entry.entry_key,
+        telegram_message_id=4711,
+        last_price_eur=price,
+        last_is_reserved=reserved,
+        watch_until=_T0 + timedelta(days=7),
+    )
+    store.watches[_FIXED_UUID] = watch
+    return entry, store, snapshot, watch
+
+
+async def test_reserved_flip_edits_within_one_cycle() -> None:
+    entry, store, _, _ = _watched_setup()
+    fresh = _listing("watched1", price=Decimal("100.00"), is_reserved=True)
+    fetcher = _FakeFetcher(response=[fresh])
+    evaluator = _FakeEvaluator()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    [(message_id, rendered, has_photo)] = telegram.edits
+    assert message_id == 4711
+    assert rendered.text.splitlines()[0] == "🔴 RESERVADO"
+    assert has_photo is True  # original alert carried a photo
+    assert store.watches[_FIXED_UUID].last_is_reserved is True
+    assert store.watches[_FIXED_UUID].last_edited_at == _T0
+    [update] = store.alert_updates
+    assert update.change_kind == "reserved"
+    assert update.edit_ok is True
+    # The watched listing never re-enters the new-alert path.
+    assert summary.alerts_sent == 0
+    assert evaluator.calls == []
+
+
+async def test_flip_back_restores_comprar_and_unbanners() -> None:
+    entry, store, _, _ = _watched_setup(reserved=True, phase="phase2")
+    fresh = _listing("watched1", price=Decimal("100.00"), is_reserved=False)
+    fetcher = _FakeFetcher(response=[fresh])
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=_FakeEvaluator(), store=store, telegram=telegram),
+    )
+
+    [(_, rendered, _)] = telegram.edits
+    assert rendered.text.splitlines()[0] == "🟢 Disponible de nuevo"
+    assert rendered.inline_keyboard is not None
+    assert any("Comprar" in b.text for b in rendered.inline_keyboard[0])
+    [update] = store.alert_updates
+    assert update.change_kind == "available"
+
+
+async def test_sub_threshold_drop_advances_without_edit() -> None:
+    entry, store, _, _ = _watched_setup()
+    fresh = _listing("watched1", price=Decimal("99.60"))  # -0.40 € / -0.4 %
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[fresh]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    assert telegram.edits == []
+    assert store.alert_updates == []
+    assert store.watches[_FIXED_UUID].last_price_eur == Decimal("99.60")
+    assert store.watches[_FIXED_UUID].last_edited_at is None
+
+
+async def test_price_increase_advances_without_edit() -> None:
+    entry, store, _, _ = _watched_setup()
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[_listing("watched1", price=Decimal("120.00"))]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    assert telegram.edits == []
+    assert store.watches[_FIXED_UUID].last_price_eur == Decimal("120.00")
+
+
+async def test_big_drop_edits_and_sends_ping() -> None:
+    entry, store, _, _ = _watched_setup()
+    fresh = _listing("watched1", price=Decimal("80.00"))  # -20 %
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[fresh]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    [(_, rendered, _)] = telegram.edits
+    assert rendered.text.splitlines()[0].startswith("📉")
+    assert "80,00" in rendered.text.splitlines()[0]
+    # The ping went out as a NEW message.
+    [ping] = telegram.sends
+    assert "Bajada" in ping.text
+    [update] = store.alert_updates
+    assert update.change_kind == "price_drop"
+    assert update.old_value == "100.00"
+    assert update.new_value == "80.00"
+
+
+async def test_ordinary_drop_edits_silently_no_ping() -> None:
+    entry, store, _, _ = _watched_setup()
+    fresh = _listing("watched1", price=Decimal("95.00"))  # -5 %
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[fresh]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    assert len(telegram.edits) == 1
+    assert telegram.sends == []  # silent edit — no ping below 10 %
+
+
+async def test_failed_edit_retries_next_cycle() -> None:
+    entry, store, _, _ = _watched_setup()
+    fresh = _listing("watched1", price=Decimal("80.00"))
+    telegram = _FakeTelegram()
+    telegram.edit_response = TelegramDeliveryFailed("boom")
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[fresh]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    # Attempt failed: audited as such, state NOT advanced.
+    [update] = store.alert_updates
+    assert update.edit_ok is False
+    assert store.watches[_FIXED_UUID].last_price_eur == Decimal("100.00")
+
+    # Next cycle: the same diff re-fires and succeeds.
+    telegram.edit_response = None
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[fresh]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+    assert len(telegram.edits) == 1
+    assert store.watches[_FIXED_UUID].last_price_eur == Decimal("80.00")
+
+
+async def test_deleted_message_closes_watch_silently() -> None:
+    entry, store, _, _ = _watched_setup()
+    telegram = _FakeTelegram()
+    telegram.edit_response = TelegramMessageGone("message to edit not found")
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[_listing("watched1", price=Decimal("80.00"))]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    assert _FIXED_UUID not in store.watches  # watch closed
+    assert telegram.sends == []  # and no replacement message
+
+
+async def test_buy_in_flight_skips_edit_entirely() -> None:
+    entry, store, _, _ = _watched_setup(phase="phase2")
+    store.last_callback_verbs[_FIXED_UUID] = "buy"
+    telegram = _FakeTelegram()
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[_listing("watched1", is_reserved=True)]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    assert telegram.edits == []
+    assert store.alert_updates == []
+    # State untouched — the diff re-fires once the buy resolves.
+    assert store.watches[_FIXED_UUID].last_is_reserved is False
+
+
+async def test_dispatch_persists_message_id_and_creates_watch() -> None:
+    entry = _entry()
+    store = _FakeStore()
+    telegram = _FakeTelegram(send_response=888)
+
+    await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(
+            fetcher=_FakeFetcher(response=[_listing("abc123")]),
+            evaluator=_FakeEvaluator(),
+            store=store,
+            telegram=telegram,
+        ),
+    )
+
+    [snapshot] = store.snapshots
+    assert snapshot.telegram_message_id == 888
+    watch = store.watches[snapshot.alert_id]
+    assert watch.listing_id == "abc123"
+    assert watch.telegram_message_id == 888
+    assert watch.watch_until == _T0 + timedelta(days=7)  # default policy

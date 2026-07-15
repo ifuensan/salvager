@@ -38,6 +38,15 @@ class _RecordingTelegram(TelegramSurface):
         self.sends.append(rendered)
         return 1000 + len(self.sends)
 
+    async def edit_alert(
+        self,
+        message_id: int,
+        rendered: RenderedAlert,
+        *,
+        has_photo: bool,
+    ) -> None:
+        return None
+
     async def edit_keyboard(
         self,
         message_id: int,

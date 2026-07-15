@@ -173,6 +173,9 @@ class FakeTelegram(TelegramSurface):
         self.sent.append(rendered)
         return len(self.sent)
 
+    async def edit_alert(self, message_id: int, rendered: Any, *, has_photo: bool) -> None:
+        pass
+
     async def edit_keyboard(self, message_id: int, keyboard: Any) -> None:
         pass
 

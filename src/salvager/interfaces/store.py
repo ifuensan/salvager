@@ -24,9 +24,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from salvager.domain.alert import AlertSnapshot
+from salvager.domain.alert_watch import AlertUpdate, AlertWatch
 from salvager.domain.audit import (
     CallbackAudit,
     TapEventAudit,
@@ -112,6 +114,67 @@ class Store(ABC):
     @abstractmethod
     async def record_callback(self, callback: CallbackAudit) -> None:
         """Append a callback-tap row to the audit log (NFR-S4)."""
+
+    @abstractmethod
+    async def get_last_callback_verb(self, alert_id: UUID) -> str | None:
+        """The most recent callback verb for an alert, or None if untapped.
+
+        Alert edits use this to reconstruct the keyboard the message
+        currently deserves (original row / ack row / in-flight badge) —
+        an edit without ``reply_markup`` would drop the buttons
+        (edit-alerts-on-state-change)."""
+
+    # ─────────────────────────────────────────────────────────────────
+    # Alert watches — MUTABLE state (edit-alerts-on-state-change).
+    # Same class as wishlist_runtime_state, not audit data: the watch
+    # row is created at dispatch, advanced after successful edits (or
+    # silently for sub-threshold price movement), and removed on the
+    # terminal transitions (deleted message / window expiry).
+    # ─────────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def create_watch(self, watch: AlertWatch) -> None:
+        """Persist a new watch row for a just-dispatched alert."""
+
+    @abstractmethod
+    async def active_watches(self, entry_key: EntryKey, *, now: datetime) -> list[AlertWatch]:
+        """All watches for ``entry_key`` with ``watch_until > now``."""
+
+    @abstractmethod
+    async def advance_watch(
+        self,
+        alert_id: UUID,
+        *,
+        price_eur: Decimal,
+        is_reserved: bool,
+        edited_at: datetime | None = None,
+    ) -> None:
+        """Update a watch's last-known state.
+
+        ``edited_at`` is set only when a Telegram edit succeeded; a
+        sub-threshold/increase price movement advances the price
+        silently (``edited_at=None`` keeps the previous value).
+        """
+
+    @abstractmethod
+    async def close_watch(self, alert_id: UUID) -> None:
+        """Remove a watch (terminal transition or explicit close)."""
+
+    @abstractmethod
+    async def prune_expired_watches(self, *, now: datetime) -> int:
+        """Delete watches with ``watch_until <= now``; return count removed."""
+
+    # ─────────────────────────────────────────────────────────────────
+    # Alert updates — append-only audit of attempted edits (NFR-S4)
+    # ─────────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def record_alert_update(self, update: AlertUpdate) -> None:
+        """Append one attempted-edit audit row."""
+
+    @abstractmethod
+    async def get_alert_updates(self, alert_id: UUID) -> list[AlertUpdate]:
+        """All update rows for an alert, oldest first (``audit show``)."""
 
     # ─────────────────────────────────────────────────────────────────
     # Phase 1: _meta key-value store

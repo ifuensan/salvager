@@ -236,7 +236,7 @@ def _load_full_record(db_path: Path, audit_id: int) -> dict[str, Any] | None:
             "SELECT * FROM alert_snapshots WHERE audit_id = ?", (audit_id,)
         ).fetchone()
         if alert is not None:
-            return _full_alert_record(alert)
+            return _full_alert_record(alert, connection)
         callback = connection.execute(
             "SELECT * FROM callbacks WHERE audit_id = ?", (audit_id,)
         ).fetchone()
@@ -249,7 +249,7 @@ def _load_full_record(db_path: Path, audit_id: int) -> dict[str, Any] | None:
         connection.close()
 
 
-def _full_alert_record(row: sqlite3.Row) -> dict[str, Any]:
+def _full_alert_record(row: sqlite3.Row, connection: sqlite3.Connection) -> dict[str, Any]:
     listing = Listing.model_validate_json(row["listing_json"])
     evaluation = ListingEvaluation.model_validate_json(row["evaluation_json"])
     snapshot = AlertSnapshot(
@@ -262,7 +262,7 @@ def _full_alert_record(row: sqlite3.Row) -> dict[str, Any]:
         phase2_max_price_eur=row["phase2_max_price_eur"],
         rendered_at=datetime.fromisoformat(row["rendered_at"]),
     )
-    return {
+    record = {
         "id": int(row["audit_id"]),
         "type": _TYPE_ALERT,
         "timestamp": _iso_z(row["rendered_at"]),
@@ -274,6 +274,41 @@ def _full_alert_record(row: sqlite3.Row) -> dict[str, Any]:
         "evaluation": json.loads(row["evaluation_json"]),
         "rendered_telegram_text": render_phase1_listing_alert(snapshot).text,
     }
+    updates = _read_alert_updates(connection, str(row["alert_id"]))
+    if updates:
+        record["updates"] = updates
+    return record
+
+
+def _read_alert_updates(connection: sqlite3.Connection, alert_id: str) -> list[dict[str, Any]]:
+    """The alert's edit history, oldest first (edit-alerts-on-state-change).
+
+    Each row carries the full rendered body that was sent to Telegram, so
+    the operator-visible message can be replayed at any point in time.
+    Tolerates pre-0003 databases (no ``alert_updates`` table)."""
+    try:
+        rows = connection.execute(
+            """
+            SELECT change_kind, old_value, new_value, edited_at, edit_ok, rendered_text
+            FROM alert_updates
+            WHERE alert_id = ?
+            ORDER BY audit_id ASC
+            """,
+            (alert_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [
+        {
+            "change_kind": update["change_kind"],
+            "old_value": update["old_value"],
+            "new_value": update["new_value"],
+            "edited_at": _iso_z(update["edited_at"]),
+            "edit_ok": bool(update["edit_ok"]),
+            "rendered_telegram_text": update["rendered_text"],
+        }
+        for update in rows
+    ]
 
 
 def _full_callback_record(row: sqlite3.Row) -> dict[str, Any]:
