@@ -224,9 +224,26 @@ class BuyOrchestrator:
         try:
             cross = await self.reconciler.reconcile_cross_source(snapshot.listing)
         except Exception as exc:
+            # A 404 from either marketplace API means the listing no longer
+            # exists — sold or withdrawn between the alert and the tap. That
+            # is a normal marketplace outcome, not a system failure: tell the
+            # operator plainly and do NOT count it toward the circuit breaker
+            # (two overnight sales almost opened it, 2026-07-16).
+            if getattr(exc, "status_code", None) == 404:
+                self._log.info(
+                    "buy_orchestrator_listing_gone",
+                    extra={"listing_id": snapshot.listing.listing_id},
+                )
+                gone_ctx: dict[str, Any] = {"detail": "listing returned 404 on re-fetch"}
+                await self._dispatch_failure(snapshot, BuyFailureReason.listing_gone, gone_ctx)
+                return BuyOutcomeAborted(
+                    reason="listing_gone",
+                    rendered_as=BuyFailureReason.listing_gone,
+                    ctx=gone_ctx,
+                )
             self._log.error(
                 "buy_orchestrator_cross_source_failed",
-                extra={"error_class": exc.__class__.__name__},
+                extra={"error_class": exc.__class__.__name__, "error": str(exc)[:200]},
             )
             await self.circuit_breaker.record_outcome(
                 "failure", last_affected_entry=snapshot.entry_display_name

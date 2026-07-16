@@ -572,6 +572,7 @@ _PAYMENT_METHOD_LABELS: Final[dict[str, str]] = {
 
 #: Per-variant short cause label shown on row 2 of the failure alert.
 _BUY_FAILURE_CAUSE_LABELS: Final[dict[str, str]] = {
+    "listing_gone": "El anuncio ya no está disponible (vendido o retirado)",
     "reconciliation_tripped": "Reconciliación de precios falló",
     "ui_check_failed": "Verificación de UI falló",
     "circuit_open": "Circuit breaker abierto",

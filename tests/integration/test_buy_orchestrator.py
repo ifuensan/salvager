@@ -769,3 +769,63 @@ async def test_catch_all_swallows_secondary_reporter_and_circuit_failures(
 
 
 _ = uuid4  # silence the unused-import hint (kept for future scenarios)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Scenario — listing gone (sold/withdrawn) between alert and tap
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_listing_gone_404_aborts_without_circuit_increment(
+    migrated_db: Path,
+) -> None:
+    """A 404 on the pre-buy re-fetch means the listing sold or was withdrawn
+    between the alert and the tap — a normal marketplace outcome, not a
+    system failure: the operator gets a plain 'ya no está disponible'
+    message and the circuit breaker is NOT incremented (first real tap,
+    2026-07-16, almost opened the breaker on two overnight sales)."""
+    from salvager.domain.errors import WallapopApiError
+
+    wired = _wire(migrated_db)
+    wired.cross_source.next_exception = WallapopApiError(404, "item not found")
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(_callback_event())
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeAborted)
+    assert outcome.reason == "listing_gone"
+    assert outcome.rendered_as is BuyFailureReason.listing_gone
+    assert wired.browser.calls == []  # no checkout ever started
+
+    # The operator-facing message names the real cause, in plain Spanish.
+    failure_msgs = [m for m in wired.telegram.sent if "no está disponible" in m.text]
+    assert len(failure_msgs) == 1
+    assert "La compra NO se ha ejecutado" in failure_msgs[0].text
+
+    # Circuit breaker NOT incremented — this is an abort, not a failure.
+    counter_row = _row(migrated_db, "SELECT consecutive_failures FROM phase2_state WHERE id = 1")
+    assert counter_row is not None
+    assert int(str(counter_row["consecutive_failures"])) == 0
+
+
+async def test_non_404_cross_source_error_still_counts_as_failure(
+    migrated_db: Path,
+) -> None:
+    """The listing-gone carve-out is exactly status 404 — any other
+    marketplace error keeps the existing failure semantics (circuit
+    increments, marketplace_error variant)."""
+    from salvager.domain.errors import WallapopApiError
+
+    wired = _wire(migrated_db)
+    wired.cross_source.next_exception = WallapopApiError(503, "upstream sad")
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(_callback_event())
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeFailure)
+    assert outcome.reason is BuyFailureReason.marketplace_error
+    counter_row = _row(migrated_db, "SELECT consecutive_failures FROM phase2_state WHERE id = 1")
+    assert counter_row is not None
+    assert int(str(counter_row["consecutive_failures"])) == 1

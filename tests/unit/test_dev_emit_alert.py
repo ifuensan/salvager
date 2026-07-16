@@ -2,7 +2,7 @@
 
 Three layers:
 
-  - **catalog completeness** — the registry contains exactly 37
+  - **catalog completeness** — the registry contains exactly 38
     variants (3+3 listing, 1 receipt, 8 buy failures, 22 operational)
     and the set drifts only when a PRD amendment adds an EventName /
     BuyFailureReason variant;
@@ -47,7 +47,7 @@ def test_registry_is_a_closed_set_of_37_variants() -> None:
     expected_operational = {e.value for e in EventName}
     expected = expected_listing | expected_buy | expected_operational
     assert set(VARIANT_REGISTRY) == expected
-    assert len(VARIANT_REGISTRY) == 37
+    assert len(VARIANT_REGISTRY) == 38
 
 
 def test_registry_covers_every_buy_failure_reason() -> None:
@@ -94,7 +94,7 @@ def test_list_variants_prints_every_variant_name() -> None:
     assert result.exit_code == 0
     for name in VARIANT_REGISTRY:
         assert name in result.output
-    assert "37 variants total" in result.output
+    assert "38 variants total" in result.output
 
 
 def test_emit_alert_dry_run_prints_rendered_text_without_sending() -> None:
