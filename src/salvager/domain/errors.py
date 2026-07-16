@@ -252,6 +252,7 @@ class BuyFailureReason(enum.Enum):
     entry, never a silent fall-through.
     """
 
+    listing_gone = "listing_gone"
     reconciliation_tripped = "reconciliation_tripped"
     ui_check_failed = "ui_check_failed"
     circuit_open = "circuit_open"

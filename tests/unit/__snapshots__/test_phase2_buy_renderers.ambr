@@ -13,6 +13,18 @@
   2\. `salvager phase2 enable <entry>`
   '''
 # ---
+# name: test_every_variant_has_a_snapshot[listing_gone]
+  '''
+  🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: El anuncio ya no está disponible \(vendido o retirado\)
+  
+  La compra NO se ha ejecutado\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  2\. `salvager phase2 enable <entry>`
+  '''
+# ---
 # name: test_every_variant_has_a_snapshot[marketplace_error]
   '''
   🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
