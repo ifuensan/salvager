@@ -7,12 +7,21 @@ NFR-M4.
 
 ## [Unreleased]
 
-Alerts used to freeze the moment they fired: the daemon never looked at
-an alerted listing again, so the message the operator acts on could go
-stale — a reserved listing kept its live `✅ Comprar` button, and price
-drops went unseen.
+Nothing on the wire today. Post-v1 work is described in
+[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
 
-**Live-updating alerts — the original Telegram message edits itself on state changes**
+---
+
+## [0.4.0] — 2026-07-16
+
+Minor bump: first schema migration since 0002 (`alert_watches` +
+`alert_updates` tables, `telegram_message_id` column). Alerts used to
+freeze the moment they fired: the daemon never looked at an alerted
+listing again, so the message the operator acts on could go stale — a
+reserved listing kept its live `✅ Comprar` button, and price drops
+went unseen.
+
+**Live-updating alerts — the original Telegram message edits itself on state changes (#41)**
 
 - Every dispatched alert now persists its Telegram `message_id`
   (migration `0003`, nullable on historical rows — those are never
@@ -39,9 +48,9 @@ drops went unseen.
   `audit show --id <n>` now replays the alert's edit history.
 - Sold detection is explicitly out of scope (no reliable signal in
   search results).
-
-Post-v1 work is described in [ROADMAP.md](ROADMAP.md) under
-"Post-launch (deferred)".
+- OpenSpec: change `edit-alerts-on-state-change` archived and its new
+  capability spec promoted to
+  `openspec/specs/listing-alert-state-updates/` (#42).
 
 ---
 
@@ -586,8 +595,9 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.0...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.4.0]: https://github.com/ifuensan/salvager/releases/tag/v0.4.0
 [0.3.5]: https://github.com/ifuensan/salvager/releases/tag/v0.3.5
 [0.3.4]: https://github.com/ifuensan/salvager/releases/tag/v0.3.4
 [0.3.3]: https://github.com/ifuensan/salvager/releases/tag/v0.3.3
