@@ -12,6 +12,28 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.4.1] — 2026-07-16
+
+The first real Comprar tap (the safety stack correctly aborted — ROADMAP
+criterion 2 exercised against the real world) surfaced two gaps: the
+operator saw a generic "Error en el marketplace" when the listing had
+simply sold overnight, and the abort counted toward the circuit breaker
+— two overnight sales left it one legitimate tap away from locking
+Phase 2.
+
+**A sold/withdrawn listing is not a system failure (#44)**
+
+- New `BuyFailureReason.listing_gone`: a 404 on the pre-buy cross-source
+  re-fetch renders as "El anuncio ya no está disponible (vendido o
+  retirado)" with the standard reassurance line.
+- The buy returns an abort (audit row + operator message kept) and does
+  NOT increment the circuit breaker; any non-404 marketplace error keeps
+  the existing failure semantics.
+- `buy_orchestrator_cross_source_failed` logs now carry the error
+  message, not just the class.
+
+---
+
 ## [0.4.0] — 2026-07-16
 
 Minor bump: first schema migration since 0002 (`alert_watches` +
@@ -595,8 +617,9 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.1...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.4.1]: https://github.com/ifuensan/salvager/releases/tag/v0.4.1
 [0.4.0]: https://github.com/ifuensan/salvager/releases/tag/v0.4.0
 [0.3.5]: https://github.com/ifuensan/salvager/releases/tag/v0.3.5
 [0.3.4]: https://github.com/ifuensan/salvager/releases/tag/v0.3.4
