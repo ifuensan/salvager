@@ -12,6 +12,29 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.4.2] — 2026-07-18
+
+The pre-buy reconciliation had never worked against live Wallapop: the
+per-item endpoint stopped accepting URL slugs (slug and numeric tail
+both 404; only the internal id works), so every real Comprar tap
+aborted — the last one falsely reporting "vendido o retirado" on a live
+60 € listing.
+
+**Reconciliation re-fetches by internal listing id (#46)**
+
+- New `PageFetcher.fetch_listing(listing)`: the pre-buy re-fetch keys on
+  `listing.listing_id` — Wallapop hits `/api/v3/items/<internal id>`
+  and parses the (different) detail payload shape; eBay calls `getItem`
+  with the exact percent-encoded `v1|…` id instead of the legacy
+  numeric URL tail; the marketplace dispatcher routes by
+  `listing.marketplace` instead of parsing URL hosts.
+- With the key fixed, a 404 genuinely means the listing is gone — the
+  v0.4.1 `listing_gone` message is now truthful.
+- `fetch(url)` remains for `explain <url>` (upstream slug-404 there is a
+  known limitation).
+
+---
+
 ## [0.4.1] — 2026-07-16
 
 The first real Comprar tap (the safety stack correctly aborted — ROADMAP
@@ -617,8 +640,9 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.2...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.4.2]: https://github.com/ifuensan/salvager/releases/tag/v0.4.2
 [0.4.1]: https://github.com/ifuensan/salvager/releases/tag/v0.4.1
 [0.4.0]: https://github.com/ifuensan/salvager/releases/tag/v0.4.0
 [0.3.5]: https://github.com/ifuensan/salvager/releases/tag/v0.3.5
