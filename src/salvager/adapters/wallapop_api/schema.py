@@ -121,6 +121,42 @@ class WallapopApiItem(BaseModel):
         return None
 
 
+class WallapopApiLocalizedText(BaseModel):
+    """The per-item detail endpoint wraps prose in ``{"original": ...}``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    original: str = ""
+
+
+class WallapopApiCashPrice(BaseModel):
+    """The detail endpoint nests the price as ``{"cash": {amount, currency}}``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    cash: WallapopApiPrice
+
+
+class WallapopApiItemDetail(BaseModel):
+    """One item from ``/api/v3/items/{listing_id}`` — the DETAIL shape.
+
+    Deliberately a minimal projection: the only consumer is the Phase 2
+    pre-buy reconciliation, which compares the price. The detail shape
+    differs from the search shape everywhere it matters (observed
+    2026-07-18): ``title``/``description`` are ``{"original": ...}``
+    objects, the price nests under ``cash``, the slug field is ``slug``
+    (``web_slug`` is absent), and there is no ``reserved`` envelope.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    title: WallapopApiLocalizedText
+    description: WallapopApiLocalizedText = Field(default_factory=WallapopApiLocalizedText)
+    price: WallapopApiCashPrice
+    slug: str | None = None
+
+
 class WallapopApiSearchSection(BaseModel):
     """The ``data.section`` wrapper in the v3 response."""
 

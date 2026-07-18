@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from salvager.domain.errors import (
     WallapopSchemaDrift,
     WallapopSessionExpired,
 )
-from salvager.domain.listing import SearchQuery
+from salvager.domain.listing import Listing, SearchQuery
 
 # ─────────────────────────────────────────────────────────────────────────
 # Cookies helper
@@ -440,3 +441,85 @@ def test_fetcher_module_never_disables_tls_verification() -> None:
                 )
                 if is_verify_false:
                     pytest.fail(f"fetcher.py passes verify=False at line {node.lineno} — NFR-S3")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# fetch_listing — reconciliation re-fetch by INTERNAL id (2026-07-18 drift)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _detail_payload() -> dict[str, object]:
+    """The per-item DETAIL shape (differs from the search shape)."""
+    return {
+        "id": "4z48xyk4ymjy",
+        "title": {"original": "2x8GB Corsair DDR4 3000MHz RAM"},
+        "description": {"original": "Dos módulos de memoria RAM."},
+        "price": {"cash": {"amount": 60.0, "currency": "EUR"}},
+        "slug": "2x8gb-corsair-ddr4-3000mhz-ram-1282474986",
+        "user": {"id": "nzx59xek0m62"},
+    }
+
+
+def _known_listing() -> Listing:
+    return Listing(
+        listing_id="4z48xyk4ymjy",
+        marketplace="wallapop",
+        url="https://es.wallapop.com/item/2x8gb-corsair-ddr4-3000mhz-ram-1282474986",
+        title="2x8GB Corsair DDR4 3000MHz RAM",
+        description="d",
+        price_eur=Decimal("60.00"),
+        fetched_at=datetime(2026, 7, 18, tzinfo=UTC),
+    )
+
+
+async def test_fetch_listing_uses_internal_id_not_url_slug(tmp_path: Path) -> None:
+    """Wallapop's item endpoint stopped accepting URL slugs (2026-07-18:
+    slug and numeric tail both 404; only the internal id works) — the
+    reconciliation re-fetch must key on ``listing.listing_id``."""
+    payload = _detail_payload()
+
+    def handler(request: _RecordedRequest) -> WallapopResponse:
+        assert request.path == "/api/v3/items/4z48xyk4ymjy"  # id, NOT the slug
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
+
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listing = await fetcher.fetch_listing(_known_listing())
+    finally:
+        await fetcher.aclose()
+    assert listing.listing_id == "4z48xyk4ymjy"
+    assert listing.price_eur == Decimal("60.0")
+    assert listing.title == "2x8GB Corsair DDR4 3000MHz RAM"
+
+
+async def test_fetch_listing_parses_the_detail_shape(tmp_path: Path) -> None:
+    """The detail payload nests prose in {"original"} and price under
+    {"cash"} — the search-shape model would reject it."""
+    payload = _detail_payload()
+
+    def handler(_: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
+
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listing = await fetcher.fetch_listing(_known_listing())
+    finally:
+        await fetcher.aclose()
+    assert listing.description == "Dos módulos de memoria RAM."
+    assert listing.url.endswith("/item/2x8gb-corsair-ddr4-3000mhz-ram-1282474986")
+
+
+async def test_fetch_listing_404_raises_api_error(tmp_path: Path) -> None:
+    """A 404 by-id now genuinely means the listing is gone — the
+    listing_gone classification downstream stays truthful."""
+
+    def handler(_: _RecordedRequest) -> WallapopResponse:
+        return WallapopResponse(status_code=404, text="", json_data=None)
+
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        with pytest.raises(WallapopApiError) as excinfo:
+            await fetcher.fetch_listing(_known_listing())
+    finally:
+        await fetcher.aclose()
+    assert excinfo.value.status_code == 404

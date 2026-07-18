@@ -543,3 +543,41 @@ async def test_post_fetch_filter_applies_import_buffer_to_non_eu_items(tmp_path:
         await fetcher.aclose()
 
     assert [listing.listing_id for listing in listings] == ["v1|es|0"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_listing_uses_exact_browse_item_id(tmp_path: Path) -> None:
+    """Reconciliation re-fetches by ``listing.listing_id`` (the exact
+    ``v1|...`` Browse id, percent-encoded) — never by parsing the
+    ``itemWebUrl`` tail, which is the legacy numeric id plus query noise."""
+    payload = {
+        "itemId": "v1|365659770742|635443416947",
+        "title": "Corsair RAM",
+        "price": {"value": "63.66", "currency": "EUR"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.raw_path == b"/buy/browse/v1/item/v1%7C365659770742%7C635443416947"
+        return httpx.Response(200, json=payload)
+
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from salvager.domain.listing import Listing
+
+    known = Listing(
+        listing_id="v1|365659770742|635443416947",
+        marketplace="ebay",
+        url="https://www.ebay.es/itm/365659770742?_skw=corsair&hash=item123",
+        title="Corsair RAM",
+        description="d",
+        price_eur=Decimal("63.66"),
+        fetched_at=_dt(2026, 7, 18, tzinfo=_UTC),
+    )
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listing = await fetcher.fetch_listing(known)
+    finally:
+        await fetcher.aclose()
+    assert listing.listing_id == "v1|365659770742|635443416947"
+    assert listing.price_eur == Decimal("63.66")

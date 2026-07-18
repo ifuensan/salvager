@@ -76,7 +76,7 @@ class Reconciler:
         marketplace-error variant. Reconciliation is fail-closed by
         design — if we can't verify the price, we don't pay.
         """
-        cross = await self.cross_source_fetcher.fetch(listing.url)
+        cross = await self.cross_source_fetcher.fetch_listing(listing)
         result = compute_tolerance(
             listing.price_eur,
             cross.price_eur,

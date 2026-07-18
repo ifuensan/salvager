@@ -33,8 +33,20 @@ class PageFetcher(ABC):
 
     @abstractmethod
     async def fetch(self, listing_url: str) -> Listing:
-        """Fetch a single listing by URL — used by ``explain <url>`` and
-        the Phase 2 pre-buy reconciliation."""
+        """Fetch a single listing by URL — the ``explain <url>`` path,
+        where a pasted URL is all we have."""
+
+    async def fetch_listing(self, listing: Listing) -> Listing:
+        """Re-fetch a KNOWN listing — the Phase 2 pre-buy reconciliation.
+
+        Defaults to :meth:`fetch` on ``listing.url``. Adapters override
+        when the public URL is not a reliable re-fetch key: Wallapop's
+        per-item endpoint stopped accepting URL slugs (observed
+        2026-07-18 — only the internal ``listing_id`` works), and eBay's
+        ``getItem`` wants the exact ``v1|...`` id, not the legacy
+        numeric tail of ``itemWebUrl``.
+        """
+        return await self.fetch(listing.url)
 
 
 class PageFetcherError(RuntimeError):

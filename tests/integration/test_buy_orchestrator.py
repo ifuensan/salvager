@@ -223,6 +223,9 @@ class FakeCrossSourceFetcher:
     async def search(self, *_a: Any, **_kw: Any) -> list[Listing]:
         raise NotImplementedError
 
+    async def fetch_listing(self, listing: Listing) -> Listing:
+        return await self.fetch(listing.url)
+
     async def fetch(self, listing_url: str) -> Listing:
         if self.next_exception is not None:
             raise self.next_exception
