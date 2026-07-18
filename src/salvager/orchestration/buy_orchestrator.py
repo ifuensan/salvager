@@ -30,6 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,6 +38,8 @@ from salvager.adapters.sqlite_store.audit_writer import Phase2AuditWriter
 from salvager.domain.alert import (
     CallbackEvent,
     EventName,
+    InlineButton,
+    _phase2_button_row,
     render_phase2_buy_failure,
     render_phase2_buy_success,
 )
@@ -191,9 +194,51 @@ class BuyOrchestrator:
             return BuyOutcomeAborted(reason="snapshot_not_found")
 
         try:
-            return await self._run(snapshot, callback_event)
+            outcome: BuyOutcome = await self._run(snapshot, callback_event)
         except Exception as exc:
-            return await self._handle_unexpected(snapshot, callback_event, exc)
+            outcome = await self._handle_unexpected(snapshot, callback_event, exc)
+        # The callback handler painted 🟡 Comprando… (a noop badge) before
+        # handing off — without a repaint here, EVERY non-success outcome
+        # left the alert permanently un-tappable (found live 2026-07-18:
+        # the operator could not retry after a failed buy).
+        await self._restore_keyboard(callback_event, alert_id, outcome)
+        return outcome
+
+    async def _restore_keyboard(
+        self,
+        callback_event: CallbackEvent,
+        alert_id: UUID,
+        outcome: BuyOutcome,
+    ) -> None:
+        """Repaint the tapped message's keyboard to match the outcome.
+
+        Success → a terminal ``✅ Comprado`` badge (noop). Failure/abort →
+        the original Comprar row so the operator can retry (the preflight
+        re-gates every tap, so re-enabling the button is always safe).
+        Best-effort: a Telegram hiccup here must not mask the outcome.
+        """
+        try:
+            if isinstance(outcome, BuyOutcomeSuccess):
+                keyboard = [
+                    [
+                        InlineButton(
+                            text="✅ Comprado",
+                            callback_data=f"listing:noop:{alert_id}",
+                        )
+                    ]
+                ]
+            else:
+                keyboard = [_phase2_button_row(str(alert_id))]
+            await self.telegram_surface.edit_keyboard(callback_event.message_id, keyboard)
+        except Exception as exc:
+            self._log.warning(
+                "buy_keyboard_restore_failed",
+                extra={
+                    "alert_id": str(alert_id),
+                    "telegram_message_id": callback_event.message_id,
+                    "error_class": exc.__class__.__name__,
+                },
+            )
 
     # ─────────────────────────────────────────────────────────────────
     # Steps
