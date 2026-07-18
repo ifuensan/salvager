@@ -23,6 +23,7 @@ import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from pydantic import SecretStr, ValidationError
@@ -182,6 +183,30 @@ class EbayApiFetcher(PageFetcher):
         item_id = listing_url.rstrip("/").rsplit("/", 1)[-1]
         response = await self._client.get(
             f"/buy/browse/v1/item/{item_id}",
+            headers=self._auth_headers(),
+        )
+        self._quota.consume()
+        self._raise_for_status(response)
+
+        try:
+            item = EbayApiItem.model_validate(response.json())
+        except ValidationError as exc:
+            raise _from_validation_error(exc) from exc
+        return _item_to_listing(item)
+
+    async def fetch_listing(self, listing: Listing) -> Listing:
+        """Re-fetch a known listing by its Browse item id (reconciliation).
+
+        ``getItem`` wants the exact ``v1|...|...`` id — which IS
+        ``listing.listing_id``. Deriving it from ``itemWebUrl`` is
+        unreliable (the URL tail is the legacy numeric id plus query
+        noise), so the by-URL path is never used for reconciliation.
+        """
+        self._gate_or_raise()
+        await self._maybe_refresh()
+
+        response = await self._client.get(
+            f"/buy/browse/v1/item/{quote(listing.listing_id, safe='')}",
             headers=self._auth_headers(),
         )
         self._quota.consume()

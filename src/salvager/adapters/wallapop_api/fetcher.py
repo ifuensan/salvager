@@ -57,10 +57,12 @@ from pydantic import ValidationError
 from salvager.adapters.wallapop_api.cookies import load_cookies, write_cookies
 from salvager.adapters.wallapop_api.schema import (
     WallapopApiItem,
+    WallapopApiItemDetail,
     WallapopApiSearchResponse,
 )
 from salvager.domain.errors import (
     WallapopApiError,
+    WallapopError,
     WallapopSchemaDrift,
     WallapopSessionExpired,
 )
@@ -256,6 +258,51 @@ class WallapopApiFetcher(PageFetcher):
             },
         )
         return listing
+
+    async def fetch_listing(self, listing: Listing) -> Listing:
+        """Re-fetch a known listing by its INTERNAL id (pre-buy reconciliation).
+
+        The per-item endpoint stopped accepting URL slugs (observed
+        2026-07-18: ``/api/v3/items/<slug>`` and ``/api/v3/items/<numeric
+        tail>`` both 404 while ``/api/v3/items/<internal id>`` works), so
+        re-fetching by ``listing.url`` mis-reported every live listing as
+        gone — three real Comprar taps aborted with a false
+        "listing_gone" before this path existed. The detail payload is
+        also a different shape from the search payload
+        (:class:`WallapopApiItemDetail`).
+        """
+        path = _ITEM_PATH_TEMPLATE.format(listing_id=listing.listing_id)
+        started = time.perf_counter()
+        try:
+            response = await self._request(path, {})
+        except WallapopError:
+            raise
+        except Exception as exc:
+            raise WallapopApiError(0, str(exc)) from exc
+
+        self._raise_for_status(response)
+        try:
+            detail = WallapopApiItemDetail.model_validate(response.json_data)
+        except ValidationError as exc:
+            raise _from_validation_error(exc) from exc
+
+        self._log.info(
+            "wallapop_fetch_succeeded",
+            extra={
+                "marketplace": "wallapop",
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "listing_id": listing.listing_id,
+            },
+        )
+        return Listing(
+            listing_id=detail.id,
+            marketplace="wallapop",
+            url=_ITEM_URL_TEMPLATE.format(web_slug=detail.slug or detail.id),
+            title=detail.title.original,
+            description=detail.description.original,
+            price_eur=Decimal(str(detail.price.cash.amount)),
+            fetched_at=datetime.now(UTC),
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # Internals

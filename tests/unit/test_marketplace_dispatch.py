@@ -105,6 +105,7 @@ class _RecordingFetcher(PageFetcher):
         self.tag = tag
         self.searches: list[SearchQuery] = []
         self.fetches: list[str] = []
+        self.fetch_listings: list[str] = []
 
     async def search(self, query: SearchQuery) -> list[Listing]:
         self.searches.append(query)
@@ -112,6 +113,10 @@ class _RecordingFetcher(PageFetcher):
 
     async def fetch(self, listing_url: str) -> Listing:
         self.fetches.append(listing_url)
+        return _listing("wallapop" if self.tag == "wallapop" else "ebay")
+
+    async def fetch_listing(self, listing: Listing) -> Listing:
+        self.fetch_listings.append(listing.listing_id)
         return _listing("wallapop" if self.tag == "wallapop" else "ebay")
 
 
@@ -222,3 +227,17 @@ async def test_fetcher_aclose_skips_inners_without_aclose() -> None:
 
 # Silence unused-import warning when type-checkers don't see Any usage.
 _ = Any
+
+
+async def test_fetcher_fetch_listing_dispatches_by_listing_marketplace() -> None:
+    """The reconciliation re-fetch has the full domain object — routing
+    keys off ``listing.marketplace``, never off URL parsing."""
+    wallapop = _RecordingFetcher("wallapop")
+    ebay = _RecordingFetcher("ebay")
+    dispatcher = MarketplaceDispatchingPageFetcher(wallapop=wallapop, ebay=ebay)
+
+    await dispatcher.fetch_listing(_listing("wallapop", "wapo-id"))
+    await dispatcher.fetch_listing(_listing("ebay", "v1|1|0"))
+
+    assert wallapop.fetch_listings == ["wapo-id"]
+    assert ebay.fetch_listings == ["v1|1|0"]

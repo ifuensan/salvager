@@ -90,6 +90,20 @@ class MarketplaceDispatchingPageFetcher(PageFetcher):
             "any known marketplace (wallapop.com, ebay.es, ebay.com)"
         )
 
+    async def fetch_listing(self, listing: Listing) -> Listing:
+        """Route the reconciliation re-fetch by the listing's marketplace.
+
+        Unlike ``fetch``, the caller has the full domain object here, so
+        routing never depends on parsing a URL host.
+        """
+        if listing.marketplace == "wallapop":
+            return await self._wallapop.fetch_listing(listing)
+        if listing.marketplace == "ebay":
+            return await self._ebay.fetch_listing(listing)
+        raise ValueError(
+            f"unknown listing.marketplace {listing.marketplace!r}; expected 'wallapop' or 'ebay'"
+        )
+
     async def aclose(self) -> None:
         """Close both inner fetchers that own OS resources.
 
