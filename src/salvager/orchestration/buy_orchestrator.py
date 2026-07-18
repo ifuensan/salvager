@@ -191,7 +191,11 @@ class BuyOrchestrator:
             self._log.warning(
                 "buy_orchestrator_snapshot_missing", extra={"alert_id": str(alert_id)}
             )
-            return BuyOutcomeAborted(reason="snapshot_not_found")
+            aborted = BuyOutcomeAborted(reason="snapshot_not_found")
+            # The in-flight badge was already painted — restore here too or
+            # this valid tapped message stays zombie (CodeRabbit, PR #48).
+            await self._restore_keyboard(callback_event, alert_id, aborted)
+            return aborted
 
         try:
             outcome: BuyOutcome = await self._run(snapshot, callback_event)

@@ -893,3 +893,22 @@ async def test_successful_buy_paints_terminal_comprado_badge(migrated_db: Path) 
     [(_, keyboard)] = wired.telegram.keyboard_edits
     assert keyboard[0][0].text == "✅ Comprado"
     assert keyboard[0][0].callback_data.startswith("listing:noop:")
+
+
+async def test_snapshot_not_found_abort_also_restores_keyboard(migrated_db: Path) -> None:
+    """The early snapshot-missing return must not bypass restoration —
+    the in-flight badge was already painted on a real message."""
+    wired = _wire(migrated_db)
+    unknown_alert = uuid4()  # no snapshot stored under this id
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(
+            _callback_event(unknown_alert)
+        )
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeAborted)
+    assert outcome.reason == "snapshot_not_found"
+    [(message_id, keyboard)] = wired.telegram.keyboard_edits
+    assert message_id == 42
+    assert any("Comprar" in b.text for b in keyboard[0])
