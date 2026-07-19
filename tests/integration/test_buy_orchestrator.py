@@ -901,9 +901,7 @@ async def test_snapshot_not_found_abort_also_restores_keyboard(migrated_db: Path
     wired = _wire(migrated_db)
     unknown_alert = uuid4()  # no snapshot stored under this id
     try:
-        outcome = await wired.orchestrator.execute_buy_from_callback(
-            _callback_event(unknown_alert)
-        )
+        outcome = await wired.orchestrator.execute_buy_from_callback(_callback_event(unknown_alert))
     finally:
         await wired.audit_writer.close()
 
