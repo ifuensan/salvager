@@ -21,6 +21,7 @@ Zero external dependencies; safe to run from CI or locally.
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -53,6 +54,11 @@ SOURCES: Final[list[tuple[str, str, str]]] = [
     (
         "test_alert_renderer_snapshots.ambr",
         "phase1-listing",
+        "test_snapshot",
+    ),
+    (
+        "test_alert_update_snapshots.ambr",
+        "alert-updates",
         "test_snapshot",
     ),
 ]
@@ -94,8 +100,16 @@ def _parse_ambr(path: Path) -> dict[str, str]:
                 i += 1
             i += 1  # skip closing '''
         else:
-            # Single-line snapshot or unknown shape — pass-through.
-            payload.append(lines[i])
+            # Single-line snapshot: syrupy stores a Python string literal
+            # (2-space indent, quoted, backslashes doubled). Decode it so
+            # the reference file carries the actual MarkdownV2 text, not
+            # the repr; unknown shapes pass through untouched.
+            raw = lines[i].strip()
+            try:
+                decoded = ast.literal_eval(raw)
+            except (ValueError, SyntaxError):
+                decoded = raw
+            payload.append(decoded if isinstance(decoded, str) else raw)
             i += 1
         # Skip the trailing # --- separator if present.
         if i < len(lines) and _SEP_RE.match(lines[i]):

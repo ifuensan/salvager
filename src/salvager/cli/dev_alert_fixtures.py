@@ -1,6 +1,8 @@
 """Variant → :class:`RenderedAlert` registry — Story 5.17 release-audit.
 
-One closed map: every release-gate variant name (37 entries at v1.0)
+One closed map: every release-gate variant name (45 entries at v0.4.x:
+37 at the original v1.0 audit + ``listing_gone`` at v0.4.1 + the 💶
+buyer-total and edit-surface variants added by the v0.4.3 re-audit)
 to a zero-arg builder that returns a :class:`RenderedAlert`. The
 fixture data mirrors what the snapshot tests use, so the dispatched
 Telegram message and the file under
@@ -29,16 +31,21 @@ from salvager.domain.alert import (
     EventName,
     RenderedAlert,
     Severity,
+    apply_update_banner,
+    phase2_dead_reserved_row,
     render_operational_alert,
     render_phase1_listing_alert,
     render_phase2_buy_failure,
     render_phase2_buy_success,
     render_phase2_listing_alert,
+    render_price_drop_ping,
+    update_banner_line,
 )
 from salvager.domain.errors import BuyFailureReason
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 from salvager.domain.phase2_audit import TransactionRecord
+from salvager.domain.pricing import BuyerCost, buyer_cost
 
 _FIXED_ALERT_ID = UUID("12345678-1234-1234-1234-123456789abc")
 _FIXED_TS = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
@@ -150,6 +157,76 @@ def _phase2_missing_photo() -> RenderedAlert:
     return render_phase2_listing_alert(
         _snapshot(phase="phase2", listing_overrides={"photo_urls": []}),
         _PHASE2_MAX,
+    )
+
+
+def _cost(listing: Listing) -> BuyerCost:
+    """The buyer-total breakdown production attaches to every listing alert
+    (shipping-aware-pricing). Fixed buffers keep the fixture deterministic
+    — same defaults the daemon falls back to."""
+    return buyer_cost(
+        listing,
+        assumed_shipping_eur=Decimal("3.50"),
+        assumed_import_charges_eur=Decimal("3.63"),
+    )
+
+
+def _phase1_with_cost() -> RenderedAlert:
+    return render_phase1_listing_alert(_snapshot(), buyer_cost=_cost(_listing()))
+
+
+def _phase1_with_import() -> RenderedAlert:
+    overrides: dict[str, Any] = {
+        "marketplace": "ebay",
+        "url": "https://www.ebay.es/itm/123456",
+        "shipping_eur": Decimal("16.82"),
+        "country": "GB",
+    }
+    return render_phase1_listing_alert(
+        _snapshot(listing_overrides=overrides), buyer_cost=_cost(_listing(**overrides))
+    )
+
+
+def _phase2_with_cost() -> RenderedAlert:
+    return render_phase2_listing_alert(
+        _snapshot(phase="phase2"), _PHASE2_MAX, buyer_cost=_cost(_listing())
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Edit-surface builders — edit-alerts-on-state-change (v0.4.0)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _phase1_edited_reserved() -> RenderedAlert:
+    base = _phase1_with_cost()
+    return apply_update_banner(base, update_banner_line("reserved"), base.inline_keyboard)
+
+
+def _phase1_edited_price_drop() -> RenderedAlert:
+    overrides: dict[str, Any] = {"price_eur": Decimal("48.00")}
+    base = render_phase1_listing_alert(
+        _snapshot(listing_overrides=overrides), buyer_cost=_cost(_listing(**overrides))
+    )
+    banner = update_banner_line(
+        "price_drop",
+        old_price_eur=Decimal("55.00"),
+        new_price_eur=Decimal("48.00"),
+    )
+    return apply_update_banner(base, banner, base.inline_keyboard)
+
+
+def _phase2_edited_reserved() -> RenderedAlert:
+    base = _phase2_with_cost()
+    keyboard = [phase2_dead_reserved_row(str(_FIXED_ALERT_ID))]
+    return apply_update_banner(base, update_banner_line("reserved"), keyboard)
+
+
+def _price_drop_ping() -> RenderedAlert:
+    return render_price_drop_ping(
+        _ENTRY_DISPLAY,
+        old_price_eur=Decimal("55.00"),
+        new_price_eur=Decimal("48.00"),
     )
 
 
@@ -292,6 +369,13 @@ def _build_registry() -> dict[str, Callable[[], RenderedAlert]]:
         "phase2_listing_direct": _phase2_direct,
         "phase2_listing_container": _phase2_container,
         "phase2_listing_missing_photo": _phase2_missing_photo,
+        "phase1_listing_with_cost": _phase1_with_cost,
+        "phase1_listing_with_import": _phase1_with_import,
+        "phase2_listing_with_cost": _phase2_with_cost,
+        "phase1_listing_edited_reserved": _phase1_edited_reserved,
+        "phase1_listing_edited_price_drop": _phase1_edited_price_drop,
+        "phase2_listing_edited_reserved": _phase2_edited_reserved,
+        "price_drop_ping": _price_drop_ping,
         "buy_success": _buy_success,
     }
     for reason in BuyFailureReason:

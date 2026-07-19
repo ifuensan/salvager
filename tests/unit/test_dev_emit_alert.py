@@ -2,10 +2,11 @@
 
 Three layers:
 
-  - **catalog completeness** — the registry contains exactly 38
-    variants (3+3 listing, 1 receipt, 8 buy failures, 22 operational)
-    and the set drifts only when a PRD amendment adds an EventName /
-    BuyFailureReason variant;
+  - **catalog completeness** — the registry contains exactly 45
+    variants (3+3 listing, 3 cost, 3 edited, 1 price-drop ping,
+    1 receipt, 9 buy failures, 22 operational) and the set drifts only
+    when a PRD amendment adds an EventName / BuyFailureReason variant
+    or a release-audit delta adds a rendering shape;
   - **renderability** — every registered builder produces a non-empty
     MarkdownV2 ``RenderedAlert.text`` without raising;
   - **CLI seams** — ``--dry-run`` prints the rendered text to stdout
@@ -34,7 +35,7 @@ _RUNNER = CliRunner()
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def test_registry_is_a_closed_set_of_37_variants() -> None:
+def test_registry_is_a_closed_set_of_45_variants() -> None:
     expected_listing = {
         "phase1_listing_direct",
         "phase1_listing_container",
@@ -42,12 +43,19 @@ def test_registry_is_a_closed_set_of_37_variants() -> None:
         "phase2_listing_direct",
         "phase2_listing_container",
         "phase2_listing_missing_photo",
+        "phase1_listing_with_cost",
+        "phase1_listing_with_import",
+        "phase2_listing_with_cost",
+        "phase1_listing_edited_reserved",
+        "phase1_listing_edited_price_drop",
+        "phase2_listing_edited_reserved",
+        "price_drop_ping",
     }
     expected_buy = {"buy_success"} | {f"buy_failure_{r.value}" for r in BuyFailureReason}
     expected_operational = {e.value for e in EventName}
     expected = expected_listing | expected_buy | expected_operational
     assert set(VARIANT_REGISTRY) == expected
-    assert len(VARIANT_REGISTRY) == 38
+    assert len(VARIANT_REGISTRY) == 45
 
 
 def test_registry_covers_every_buy_failure_reason() -> None:
@@ -94,7 +102,7 @@ def test_list_variants_prints_every_variant_name() -> None:
     assert result.exit_code == 0
     for name in VARIANT_REGISTRY:
         assert name in result.output
-    assert "38 variants total" in result.output
+    assert "45 variants total" in result.output
 
 
 def test_emit_alert_dry_run_prints_rendered_text_without_sending() -> None:

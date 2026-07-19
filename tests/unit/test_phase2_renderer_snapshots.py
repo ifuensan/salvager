@@ -26,6 +26,7 @@ from salvager.domain.alert import (
 from salvager.domain.comps import summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
+from salvager.domain.pricing import buyer_cost
 
 _FIXED_ALERT_ID = UUID("12345678-1234-1234-1234-123456789abc")
 _FIXED_TS = datetime(2026, 5, 14, 12, 0, 0, tzinfo=UTC)
@@ -111,6 +112,18 @@ def test_snapshot_missing_photo(snapshot: SnapshotAssertion) -> None:
     rendered = render_phase2_listing_alert(_snapshot(listing=_listing(photo_urls=[])), _PHASE2_MAX)
     assert rendered.text == snapshot
     assert rendered.photo_url is None
+
+
+def test_snapshot_with_cost(snapshot: SnapshotAssertion) -> None:
+    """Production Phase 2 alerts carry the ``💶`` buyer-total row on every
+    dispatch since shipping-aware-pricing (v0.3.3), with the Comprar
+    keyboard untouched."""
+    cost = buyer_cost(_listing(), assumed_shipping_eur=Decimal("3.50"))
+    rendered = render_phase2_listing_alert(_snapshot(), _PHASE2_MAX, buyer_cost=cost)
+    assert rendered.text == snapshot
+    assert "💶" in rendered.text
+    assert rendered.inline_keyboard is not None
+    assert [b.text for b in rendered.inline_keyboard[0]] == ["✅ Comprar", "❌ Saltar", "👁 Ver"]
 
 
 def test_deeplink_row_present_on_phase2() -> None:

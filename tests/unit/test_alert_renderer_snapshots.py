@@ -32,6 +32,7 @@ from salvager.domain.alert import (
 from salvager.domain.comps import summarize_comps
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
+from salvager.domain.pricing import buyer_cost
 
 # Stable values so syrupy diffs reflect renderer drift, never clock drift.
 _FIXED_ALERT_ID = UUID("12345678-1234-1234-1234-123456789abc")
@@ -151,6 +152,43 @@ def test_snapshot_with_single_comp(snapshot: SnapshotAssertion) -> None:
     comp_summary = summarize_comps([Decimal("200.00")])
     rendered = render_phase1_listing_alert(_snapshot(), comp_summary=comp_summary)
     assert rendered.text == snapshot
+
+
+def test_snapshot_with_cost(snapshot: SnapshotAssertion) -> None:
+    """Production alerts carry the ``💶`` buyer-total row on every dispatch
+    since shipping-aware-pricing (v0.3.3). Wallapop search exposes no
+    shipping, so the buffer renders ``(est.)`` and the Protección fee
+    applies."""
+    cost = buyer_cost(_listing(), assumed_shipping_eur=Decimal("3.50"))
+    rendered = render_phase1_listing_alert(_snapshot(), buyer_cost=cost)
+    assert rendered.text == snapshot
+    assert "💶" in rendered.text
+    # The breakdown row sits between the location row and the deep link.
+    lines = rendered.text.split("\n")
+    assert lines[1].startswith("📍 ")
+    assert lines[2].startswith("💶 ")
+    assert lines[3].startswith("🔗 ")
+
+
+def test_snapshot_with_import(snapshot: SnapshotAssertion) -> None:
+    """A non-EU eBay listing with parsed shipping adds the
+    ``+ importación (est.)`` term (ebay-import-charges-pricing, v0.3.4)
+    and drops the Wallapop-only Protección term."""
+    listing = _listing(
+        marketplace="ebay",
+        url="https://www.ebay.es/itm/123456",
+        shipping_eur=Decimal("16.82"),
+        country="GB",
+    )
+    cost = buyer_cost(
+        listing,
+        assumed_shipping_eur=Decimal("3.50"),
+        assumed_import_charges_eur=Decimal("3.63"),
+    )
+    rendered = render_phase1_listing_alert(_snapshot(listing=listing), buyer_cost=cost)
+    assert rendered.text == snapshot
+    assert "importación" in rendered.text
+    assert "Protección" not in rendered.text
 
 
 def test_deeplink_row_present_with_url_and_marketplace() -> None:

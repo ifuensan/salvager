@@ -1,0 +1,48 @@
+# serializer version: 1
+# name: test_snapshot_edited_available
+  '''
+  🟢 Disponible de nuevo
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  💶 55,00 \+ 3,50 envío \(est\.\) \+ 4,82 Protección \= 63,32 €
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_snapshot_edited_price_drop
+  '''
+  📉 48,00 € \(antes 55,00 €\)
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *48,00 €*
+  📍 Madrid · Wallapop
+  💶 48,00 \+ 3,50 envío \(est\.\) \+ 4,29 Protección \= 55,79 €
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_snapshot_edited_reserved
+  '''
+  🔴 RESERVADO
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  💶 55,00 \+ 3,50 envío \(est\.\) \+ 4,82 Protección \= 63,32 €
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_snapshot_edited_reserved_phase2
+  '''
+  🔴 RESERVADO
+  🟢 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  💶 55,00 \+ 3,50 envío \(est\.\) \+ 4,82 Protección \= 63,32 €
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high · Phase 2 max: 60,00 €
+  '''
+# ---
+# name: test_snapshot_price_drop_ping
+  '📉 Bajada: 55,00 € → 48,00 € — *WD Red Plus 4TB \\(WD40EFPX\\)*'
+# ---

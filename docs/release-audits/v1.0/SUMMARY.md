@@ -55,9 +55,78 @@ unchanged. Within the listing surface:
   raw text) and the comp `–`/`·`/`€` glyphs survive. New §1 invariant to
   add: **deep link opens the correct listing**.
 
-Until those cells are re-captured the listing-surface §1/§2/§3 verdicts
-are **PENDING at v0.3.1** (the tables below still reflect the 2026-05-16
-run on the pre-deep-link renderer).
+> **Superseded by the v0.4.3 delta below** — the v0.3.1 capture cells
+> were never taken; the v0.4.3 delta subsumes them.
+
+---
+
+## Re-audit delta — v0.4.3 (2026-07-19)
+
+`domain/alert.py` changed four more times after the v0.3.1 delta above,
+so the re-audit scope was re-derived from `git diff v0.3.1..v0.4.3`:
+
+- **v0.3.3** — `💶` buyer-total breakdown row
+  (`item + envío [(est.)] [+ Protección] = total`), between the 📍 row
+  and the 🔗 deep link. **Production passes `buyer_cost` on every
+  dispatch** (`poll_loop`), so every live alert since v0.3.3 carries
+  this row — the pre-existing no-cost variants remain reachable only
+  via the `audit show` / `explain` CLI replay (documented divergence).
+- **v0.3.4** — `+ importación (est.)` term inside the 💶 row for
+  non-EU listings (the Protección term is Wallapop-only).
+- **v0.4.0** — the edit surface: a replaceable banner line prepended
+  to a re-rendered body (`🔴 RESERVADO` · `🟢 Disponible de nuevo` ·
+  `📉 <new> (antes <old>)`), the standalone `📉 Bajada:` ping message,
+  and the non-tappable `🔴 Reservado` Phase 2 keyboard badge.
+- **v0.4.1** — new buy-failure variant `listing_gone`
+  ("El anuncio ya no está disponible (vendido o retirado)").
+- **v0.4.3** — post-outcome keyboard repaint (orchestration layer, not
+  `alert.py`): terminal `✅ Comprado` noop badge on success; the
+  original `✅ Comprar` row restored on failure/abort. New *button*
+  surfaces, no new message text.
+
+**Code-level audit (2026-07-19): PASS.** Every new row follows the
+locked single-escape-pass pattern (`escape_markdown_v2` over assembled
+prose; no raw user content reaches the markup); the 49 pre-existing
+reference-text files regenerated **byte-identical** (zero drift in the
+previously audited surface). Anomalies, none blocking:
+
+- **`Ebay` mis-branding (cosmetic, pre-existing).** The 📍 row and the
+  🔗 deep link label render `listing.marketplace.capitalize()` →
+  `Ebay`, not the brand form `eBay`. Present on every live eBay alert
+  since Epic 3; FR22-locked format, so a fix is a deliberate follow-up
+  release (marketplace label map), not an audit patch.
+- **Stale LLM take after a price-drop edit (by design).** The edited
+  body re-renders with current prices, but the take was written at
+  evaluation time and may quote the old price. The 📉 banner carries
+  the correction; the take is not re-evaluated on edit.
+
+Tooling refreshed in this delta: `snapshot_with_cost` /
+`snapshot_with_import` (phase1), `snapshot_with_cost` (phase2), the
+five `reference-text/alert-updates/` shapes, `listing_gone` (phase2-buy)
+— all snapshot-locked; `salvager dev emit-alert` registry grew 38 → 45
+so every new shape is capturable on a real client.
+
+**Pending (operator, needs devices)** — capture at v0.4.3 on Android +
+Telegram Desktop, per the checklist invariants:
+
+1. The 6 original listing cells (§1 table below — pending since the
+   v0.3.1 delta) **plus** the 7 new variants: `phase1_listing_with_cost`,
+   `phase1_listing_with_import`, `phase2_listing_with_cost`,
+   `phase1_listing_edited_reserved`, `phase1_listing_edited_price_drop`,
+   `phase2_listing_edited_reserved`, `price_drop_ping`.
+2. New §1 invariants: the 💶 row stays on one line on a phone-width
+   screen; the banner line renders above the headline after a real
+   in-place edit (not just as a fresh message); the `🔴 Reservado` and
+   `✅ Comprado` noop badges drop stray taps silently.
+3. §2 color-blind pass over the new glyphs (💶 · 📉 · the 🔴/🟢 banner
+   pair — banner text carries the signal, per UX-DR22).
+4. One live keyboard-lifecycle eyeball: `🟡 Comprando…` →
+   (`✅ Comprado` | restored `✅ Comprar`) after a real tap outcome
+   (v0.4.3 repaint).
+
+Until those cells are captured the listing-surface §1/§2/§3 verdicts
+are **PENDING at v0.4.3** (the tables below still reflect the
+2026-05-16 run on the pre-deep-link renderer).
 
 Mark each cell **`✓`** (clean), **`!`** (anomaly — drop a note + a PNG
 into the per-section folder), or leave **blank** if not yet captured.
