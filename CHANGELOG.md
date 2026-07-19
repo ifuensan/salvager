@@ -12,6 +12,22 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.4.3] — 2026-07-19
+
+The first buy attempts that reached the browser flow surfaced a UX trap:
+the callback handler paints the `🟡 Comprando…` noop badge on tap, and
+nothing ever repainted it — every non-success outcome left the alert
+permanently un-tappable.
+
+**The alert keyboard is restored after every buy outcome (#48)**
+
+- Success → terminal `✅ Comprado` badge; failure/abort (including
+  `snapshot_not_found`) → the original `Comprar` row, safe to re-enable
+  because the preflight re-gates every tap. Best-effort: a Telegram
+  hiccup never masks the buy outcome.
+
+---
+
 ## [0.4.2] — 2026-07-18
 
 The pre-buy reconciliation had never worked against live Wallapop: the
@@ -640,8 +656,9 @@ polling yet. Published to GHCR as `ghcr.io/ifuensan/salvager:0.1.0`.
 
 ---
 
-[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/ifuensan/salvager/compare/v0.4.3...HEAD
 [1.0.0]: https://github.com/ifuensan/salvager/releases/tag/v1.0.0
+[0.4.3]: https://github.com/ifuensan/salvager/releases/tag/v0.4.3
 [0.4.2]: https://github.com/ifuensan/salvager/releases/tag/v0.4.2
 [0.4.1]: https://github.com/ifuensan/salvager/releases/tag/v0.4.1
 [0.4.0]: https://github.com/ifuensan/salvager/releases/tag/v0.4.0

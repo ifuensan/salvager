@@ -1,6 +1,6 @@
 [project]
 name = "salvager"
-version = "0.4.2"
+version = "0.4.3"
 description = "Self-hosted personal agent for second-hand homelab parts on Wallapop and eBay.es."
 authors = [
     { name = "ifuensan", email = "ivanfs@b4os.dev" }
