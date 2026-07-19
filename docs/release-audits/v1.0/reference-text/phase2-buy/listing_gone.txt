@@ -1,0 +1,8 @@
+🚫 *Compra abortada* · WD Red Plus 4TB \(WD40EFPX\)
+Causa: El anuncio ya no está disponible \(vendido o retirado\)
+
+La compra NO se ha ejecutado\.
+
+Próximo paso:
+1\. `salvager audit show --last 5`
+2\. `salvager phase2 enable <entry>`

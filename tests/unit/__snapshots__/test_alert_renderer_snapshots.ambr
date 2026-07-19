@@ -65,6 +65,26 @@
   💬 Comps \(3 reservados\): 180,00 – 240,00 € · mediana 200,00 €
   '''
 # ---
+# name: test_snapshot_with_cost
+  '''
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  💶 55,00 \+ 3,50 envío \(est\.\) \+ 4,82 Protección \= 63,32 €
+  🔗 [Ver anuncio en Wallapop](https://wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_snapshot_with_import
+  '''
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Ebay
+  💶 55,00 \+ 16,82 envío \+ 3,63 importación \(est\.\) \= 75,45 €
+  🔗 [Ver anuncio en Ebay](https://www.ebay.es/itm/123456)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
 # name: test_snapshot_with_single_comp
   '''
   📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
