@@ -168,6 +168,7 @@ class FakeStore:
 @dataclass
 class FakeTelegram(TelegramSurface):
     sent: list[RenderedAlert] = field(default_factory=list)
+    keyboard_edits: list[tuple[int, Any]] = field(default_factory=list)
 
     async def send(self, rendered: RenderedAlert, *, reply_to_message_id: int | None = None) -> int:
         self.sent.append(rendered)
@@ -177,7 +178,7 @@ class FakeTelegram(TelegramSurface):
         pass
 
     async def edit_keyboard(self, message_id: int, keyboard: Any) -> None:
-        pass
+        self.keyboard_edits.append((message_id, keyboard))
 
     async def listen_callbacks(self, handler: Any) -> None:
         pass
@@ -832,3 +833,82 @@ async def test_non_404_cross_source_error_still_counts_as_failure(
     counter_row = _row(migrated_db, "SELECT consecutive_failures FROM phase2_state WHERE id = 1")
     assert counter_row is not None
     assert int(str(counter_row["consecutive_failures"])) == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Keyboard restoration after every outcome (found live 2026-07-18)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_failed_buy_restores_the_comprar_keyboard(migrated_db: Path) -> None:
+    """The callback handler paints 🟡 Comprando… before handing off; a
+    failure must repaint the Comprar row or the operator can never retry
+    from that message (two zombie keyboards in one day, 2026-07-18)."""
+    wired = _wire(migrated_db)
+    wired.cross_source.next_listing = _listing(price_eur=Decimal("55.00"))
+    wired.browser.next_exception = RuntimeError("tinyfish auth failed")
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(_callback_event())
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeFailure)
+    [(message_id, keyboard)] = wired.telegram.keyboard_edits
+    assert message_id == 42  # the tapped message
+    labels = [b.text for b in keyboard[0]]
+    assert any("Comprar" in text for text in labels)
+
+
+async def test_listing_gone_abort_also_restores_keyboard(migrated_db: Path) -> None:
+    from salvager.domain.errors import WallapopApiError
+
+    wired = _wire(migrated_db)
+    wired.cross_source.next_exception = WallapopApiError(404, "gone")
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(_callback_event())
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeAborted)
+    [(_, keyboard)] = wired.telegram.keyboard_edits
+    assert any("Comprar" in b.text for b in keyboard[0])
+
+
+async def test_successful_buy_paints_terminal_comprado_badge(migrated_db: Path) -> None:
+    wired = _wire(migrated_db)
+    wired.cross_source.next_listing = _listing(price_eur=Decimal("55.00"))
+    wired.browser.next_result = BuySuccess(
+        price_paid_eur=_DELIVERED_TOTAL,
+        payment_method="wallapop_pay",
+        receipt_id="WP-2026-0042",
+        screenshot_url="/app/data/screenshots/ok.png",
+        total_seconds=41,
+    )
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(_callback_event())
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeSuccess)
+    [(_, keyboard)] = wired.telegram.keyboard_edits
+    assert keyboard[0][0].text == "✅ Comprado"
+    assert keyboard[0][0].callback_data.startswith("listing:noop:")
+
+
+async def test_snapshot_not_found_abort_also_restores_keyboard(migrated_db: Path) -> None:
+    """The early snapshot-missing return must not bypass restoration —
+    the in-flight badge was already painted on a real message."""
+    wired = _wire(migrated_db)
+    unknown_alert = uuid4()  # no snapshot stored under this id
+    try:
+        outcome = await wired.orchestrator.execute_buy_from_callback(
+            _callback_event(unknown_alert)
+        )
+    finally:
+        await wired.audit_writer.close()
+
+    assert isinstance(outcome, BuyOutcomeAborted)
+    assert outcome.reason == "snapshot_not_found"
+    [(message_id, keyboard)] = wired.telegram.keyboard_edits
+    assert message_id == 42
+    assert any("Comprar" in b.text for b in keyboard[0])
