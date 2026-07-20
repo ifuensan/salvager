@@ -128,6 +128,39 @@ Until those cells are captured the listing-surface §1/§2/§3 verdicts
 are **PENDING at v0.4.3** (the tables below still reflect the
 2026-05-16 run on the pre-deep-link renderer).
 
+### Capture results — 2026-07-20, Telegram Desktop (v0.4.4, `6cb1c7a`)
+
+Emitted the 13 listing-surface variants from the live daemon on
+hermes001 (`dev emit-alert`, message_ids 297–309) and compared each
+Desktop render against its `reference-text/…` file. **All 12 captured
+render byte-faithful** — every MarkdownV2 escape resolved, bold/italic
+applied, the 💶 row on one line, the deep link a single tappable line:
+
+| Variant | Desktop | Note |
+|---|:-:|---|
+| `phase1_listing_with_cost`          | ✓ | `💶 55,00 + 3,50 envío (est.) + 4,82 Protección = 63,32 €` |
+| `phase1_listing_with_import`        | ✓ | `+ importación (est.)`, **no** Protección, `envío` not est. (eBay parses it); `Ebay` branding as documented |
+| `phase2_listing_with_cost`          | ✓ | 💶 row + `Comprar · Saltar · Ver` intact |
+| `phase1_listing_edited_reserved`    | ✓ | `🔴 RESERVADO` banner above headline |
+| `phase1_listing_edited_price_drop`  | ✓ | `📉 48,00 € (antes 55,00 €)`; body + 💶 reflect the new price |
+| `phase2_listing_edited_reserved`    | ✓ | keyboard `🔴 Reservado · 👁 Ver` |
+| `phase1_listing_direct/container/missing_photo`  | ✓ | no-cost anatomy, matches refs |
+| `phase2_listing_direct/container/missing_photo`  | ✓ | no-cost anatomy, matches refs |
+| `price_drop_ping`                   | — | not in this batch; re-emit + capture |
+
+**Bonus — live production evidence.** The same capture session included
+two **real** dispatched Corsair alerts (Badajoz, 65,00 €, real photos,
+`3:29`): `💶 65,00 + 3,50 envío (est.) + 5,57 Protección = 74,07 €` on a
+genuine armed 🟢 Phase 2 alert with real Gemini takes — the 💶 row is
+confirmed on the live poll path, not just via `dev emit-alert`.
+
+**Still pending:** the full **Android** column (all 13); the **Desktop**
+`price_drop_ping` cell; the §2 color-blind pass; and the §3 live
+keyboard-lifecycle eyeball. The "banner above headline after a *real*
+in-place edit" invariant is still open — the three edit variants were
+captured as fresh emits, not true edits (a live reserved-flip / price
+drop on a watched listing would exercise the real edit path).
+
 Mark each cell **`✓`** (clean), **`!`** (anomaly — drop a note + a PNG
 into the per-section folder), or leave **blank** if not yet captured.
 Critical anomalies (per the blocking-criteria section of the
