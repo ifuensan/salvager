@@ -146,7 +146,7 @@ applied, the 💶 row on one line, the deep link a single tappable line:
 | `phase2_listing_edited_reserved`    | ✓ | keyboard `🔴 Reservado · 👁 Ver` |
 | `phase1_listing_direct/container/missing_photo`  | ✓ | no-cost anatomy, matches refs |
 | `phase2_listing_direct/container/missing_photo`  | ✓ | no-cost anatomy, matches refs |
-| `price_drop_ping`                   | — | not in this batch; re-emit + capture |
+| `price_drop_ping`                   | — | not in this batch; captured on Android instead (below) |
 
 **Bonus — live production evidence.** The same capture session included
 two **real** dispatched Corsair alerts (Badajoz, 65,00 €, real photos,
@@ -154,12 +154,58 @@ two **real** dispatched Corsair alerts (Badajoz, 65,00 €, real photos,
 genuine armed 🟢 Phase 2 alert with real Gemini takes — the 💶 row is
 confirmed on the live poll path, not just via `dev emit-alert`.
 
-**Still pending:** the full **Android** column (all 13); the **Desktop**
-`price_drop_ping` cell; the §2 color-blind pass; and the §3 live
-keyboard-lifecycle eyeball. The "banner above headline after a *real*
-in-place edit" invariant is still open — the three edit variants were
-captured as fresh emits, not true edits (a live reserved-flip / price
-drop on a watched listing would exercise the real edit path).
+### Capture results — 2026-07-20, Telegram Android (v0.4.4, `6cb1c7a`)
+
+All **13** listing variants captured on Android (11 screenshots),
+including `price_drop_ping` (the Desktop gap) and the two real Corsair
+production alerts. **Content byte-faithful across every variant** —
+escapes resolved, bold/italic applied, emoji intact (📦🟢🔴📍💶🔗🔍📉),
+edit banners above the headline, keyboards correct
+(`🔴 Reservado · 👁 Ver` on a reserved Phase 2, `✅ Comprar · ❌ Saltar ·
+👁 Ver` otherwise, `👁 Ver · ❌ Saltar · 😴 Posponer 24h` on Phase 1),
+`price_drop_ping` plain text with no buttons/photo.
+
+**Anomaly `!` (cosmetic, non-blocking) — the 💶 row soft-wraps to two
+lines on Android** at the operator's font size, on every cost-bearing
+variant:
+
+- `💶 55,00 + 3,50 envío (est.) + 4,82` ⏎ `Protección = 63,32 €`
+- `💶 55,00 + 16,82 envío + 3,63 importación` ⏎ `(est.) = 75,45 €`
+- (live) `💶 65,00 + 3,50 envío (est.) + 5,57` ⏎ `Protección = 74,07 €`
+
+The headline price (`— 55,00 €` → `€` wraps) and the
+`Confidence … Phase 2 max: 60,00 €` row wrap the same way — this is
+Telegram's ordinary long-line reflow, **not** a markup break: the text
+is character-identical to the reference, no escape leaked, no emoji
+corrupted, fully legible. It fails the *literal* "💶 on one line"
+invariant but does **not** meet any blocking criterion (emoji collapse /
+command unnavigable / severity-emoji corruption). **Verdict: documented
+limitation, not BLOCKED.** If one-line is later deemed worth it, the fix
+is a design change (shorten the row — drop the `envío`/`Protección`
+words or symbol them), tracked as a post-v1.0 ticket, not an audit
+patch (the row format is FR22-locked).
+
+**§2 (color-blind) for the new glyphs:** 💶 and 📉 are informational,
+not signal-bearing (the adjacent text carries the meaning); the
+`🔴`/`🟢` banner circles are the already-audited severity tokens
+(2026-05-16) and the banner **word** (`RESERVADO` / `Disponible de
+nuevo` / `Bajada`) carries the state. No new colour-only dependency is
+introduced, so the UX-DR22 contract holds by inspection; a formal Coblis
+run is optional confirmation, not a gate.
+
+**Still open (both clients now captured):** the §3 live
+keyboard-lifecycle eyeball (`🟡 Comprando…` → `✅ Comprado` / restored
+`✅ Comprar` after a real tap), and the "banner above headline after a
+*real* in-place edit" invariant — the three edit variants were captured
+as fresh emits, not true edits (a live reserved-flip / price drop on a
+watched listing exercises the real edit path). Both need a live event,
+not an emit.
+
+**Side observation (not an audit item):** one screenshot's status bar
+shows a `Wallapop API degradada` operational alert fired during the
+session — a transient burn-in event on the already-audited operational
+surface (self-recovers); noted here only so it isn't mistaken for a
+capture-pass variant.
 
 Mark each cell **`✓`** (clean), **`!`** (anomaly — drop a note + a PNG
 into the per-section folder), or leave **blank** if not yet captured.
