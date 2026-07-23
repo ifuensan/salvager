@@ -1,4 +1,4 @@
-"""Offer orchestrator (wallapop-offer-flow, FR50-FR57).
+"""Offer orchestrator (wallapop-offer-flow, FR58-FR65).
 
 The single end-to-end flow the operator's Ofertar tap drives:
 
@@ -22,6 +22,7 @@ No money moves here — an offer is a negotiation message; the purchase
 
 from __future__ import annotations
 
+import contextlib
 import uuid as uuid_module
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -320,7 +321,19 @@ class OfferOrchestrator:
             screenshot_path=result.screenshot_url,
             platform_remaining=result.platform_remaining,
         )
-        await self.offer_writer.reset_failure_counter()
+        if audit_id == 0:
+            # The offer IS sent but the dedupe row is missing — the operator
+            # must know the Ofertar button could reappear for this listing.
+            await self._report(
+                EventName.offer_orchestrator_error,
+                {
+                    "error_class": "offer_audit_write_failed",
+                    "alert_id": str(snapshot.alert_id),
+                    "detail": "oferta ENVIADA pero sin fila de auditoría — dedupe no registrado",
+                },
+            )
+        with contextlib.suppress(Exception):
+            await self.offer_writer.reset_failure_counter()
         await self._dispatch_sent(snapshot, recomputed, audit_id, result)
         return OfferOutcomeSuccess(offered_eur=recomputed, audit_id=audit_id)
 
@@ -386,14 +399,21 @@ class OfferOrchestrator:
             platform_remaining=platform_remaining,
             attempted_at=self.clock(),
         )
-        if outcome == "success":
-            return await self.offer_writer.record_offer_attempt(record)
         try:
             return await self.offer_writer.record_offer_attempt(record)
         except Exception as exc:
-            self._log.warning(
+            # NEVER let an audit-write failure change the outcome: after a
+            # verified send, raising here would report "No se ha enviado
+            # ninguna oferta" (false), count a lockout failure, and leave the
+            # dedupe unrecorded — re-arming a duplicate send (CodeRabbit,
+            # PR #55). Log loudly; the success path escalates via Telegram.
+            self._log.error(
                 "offer_orchestrator_audit_failed",
-                extra={"error_class": exc.__class__.__name__, "detail": str(exc)},
+                extra={
+                    "outcome": outcome,
+                    "error_class": exc.__class__.__name__,
+                    "detail": str(exc),
+                },
             )
             return 0
 

@@ -1,4 +1,4 @@
-"""``salvager offer enable/disable/status`` (wallapop-offer-flow, FR57).
+"""``salvager offer enable/disable/status`` (wallapop-offer-flow, FR65).
 
 The offer sibling of ``phase2_cmd``: per-entry opt-in lives in
 ``wishlist.yaml`` (AR12 — rewritten through the ruamel round-trip

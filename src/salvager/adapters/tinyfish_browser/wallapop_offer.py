@@ -1,4 +1,4 @@
-"""Wallapop "hacer oferta" flow (wallapop-offer-flow, FR50-FR57).
+"""Wallapop "hacer oferta" flow (wallapop-offer-flow, FR58-FR65).
 
 Drives Wallapop's native offer form through TinyFish. The operator's
 authenticated session opens the listing page, taps the "Hacer oferta"

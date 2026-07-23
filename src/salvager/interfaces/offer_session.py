@@ -1,4 +1,4 @@
-"""``OfferSession`` port (wallapop-offer-flow, FR50-FR57).
+"""``OfferSession`` port (wallapop-offer-flow, FR58-FR65).
 
 The port through which the offer orchestrator sends one bounded price
 offer on a Wallapop listing. A sibling of :class:`BrowserSession`

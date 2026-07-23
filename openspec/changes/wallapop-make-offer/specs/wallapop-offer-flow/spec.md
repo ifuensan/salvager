@@ -50,7 +50,7 @@ Wallapop listing alerts (Phase 1 and Phase 2) SHALL carry a `💰 Ofertar` row w
 
 ### Requirement: Negotiable-Band Listings Produce A Distinct Alert
 
-Wallapop listings on offer-enabled entries whose buyer total exceeds the entry ceiling but is at or below `ceiling × (1 + offer.band_pct)` (config, default 0.20) SHALL NOT be filtered by the over-ceiling gate; they SHALL pass through the unchanged LLM evaluation and confidence gate and, when they pass, render a **negotiable alert**: a distinct severity token, the standard buyer-total breakdown, an offer line showing the computed amount and the target it fits, and the Ofertar row — never a Comprar row. Listings beyond the band, on offer-disabled entries, or on eBay SHALL be filtered exactly as before. Negotiable alerts SHALL create watch rows and participate in seen-listing dedupe like any listing alert.
+Wallapop listings on offer-enabled entries whose buyer total exceeds the entry ceiling but is at or below `ceiling × (1 + offer.band_pct)` (config, default 0.20) — AND for which a valid offer amount exists per the amount requirement (the platform's 70 % floor can rule one out) — SHALL NOT be filtered by the over-ceiling gate; they SHALL pass through the unchanged LLM evaluation and confidence gate and, when they pass, render a **negotiable alert**: a distinct severity token, the standard buyer-total breakdown, an offer line showing the computed amount and the target it fits, and the Ofertar row — never a Comprar row. Listings beyond the band, on offer-disabled entries, or on eBay SHALL be filtered exactly as before. Negotiable alerts SHALL create watch rows and participate in seen-listing dedupe like any listing alert.
 
 #### Scenario: In-band listing alerts as negotiable
 

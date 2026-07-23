@@ -36,7 +36,7 @@ This change gives the operator a **💰 Ofertar** button — the negotiation sib
 - `src/salvager/interfaces/` + `src/salvager/adapters/tinyfish_browser/` — offer-send port and a `wallapop_offer.py` TinyFish goal (adapter discipline NFR-M1: the SDK import stays inside the adapter package; payment-rail lint still applies).
 - `src/salvager/adapters/sqlite_store/` + `migrations/0004_*.sql` — offer tap/outcome tables, append-only writer methods (the append-only lint test must keep passing).
 - `src/salvager/cli/dev_alert_fixtures.py` + `tests/unit/test_dev_emit_alert.py` — new variants; the 45-variant registry pin and snapshot suites grow accordingly.
-- `config/config_yaml.py` + `config.example.yaml` (and its byte-identical bundled twin in `src/salvager/templates/`) — `offer:` config section (band percentage, kill switch); `wishlist.example.yaml` — per-entry `offer:` block.
+- `src/salvager/config/config_yaml.py` + `config.example.yaml` (and its byte-identical bundled twin in `src/salvager/templates/`) — `offer:` config section (band percentage, kill switch); `wishlist.example.yaml` — per-entry `offer:` block.
 
 **Affected docs**: PRD gains new FR ids for the offer flow (referenced from the new spec); `README.md` gains an "Ofertas" subsection; `CHANGELOG.md` on release.
 

@@ -4,7 +4,7 @@
 
 The Phase 1 alert gate and the Phase 2 buy gate SHALL compare the buyer total (not the item price) against the entry's ceiling. The eBay search MAY keep an item-level API pre-filter for quota economy, but the authoritative ceiling check SHALL be applied post-fetch against the buyer total.
 
-The over-ceiling alert-gate filter SHALL have exactly one carve-out: a **Wallapop** listing on an entry with `offer.enabled = true` whose buyer total exceeds the ceiling but is at or below `ceiling × (1 + offer.band_pct)` SHALL NOT be dropped — it SHALL be tagged negotiable and routed onward to evaluation per the `wallapop-offer-flow` capability. Listings beyond the band, listings on offer-disabled entries, and all eBay listings SHALL be filtered over-ceiling exactly as before. The carve-out SHALL NOT affect the Phase 2 buy gate: a buyer total over the ceiling SHALL remain ineligible to buy regardless of offer settings.
+The over-ceiling alert-gate filter SHALL have exactly one carve-out: a **Wallapop** listing on an entry with `offer.enabled = true` whose buyer total exceeds the ceiling but is at or below `ceiling × (1 + offer.band_pct)` — and for which a valid offer amount exists (`wallapop-offer-flow` amount requirement; the 70 % platform floor can rule one out) — SHALL NOT be dropped — it SHALL be tagged negotiable and routed onward to evaluation per the `wallapop-offer-flow` capability. Listings beyond the band, listings on offer-disabled entries, and all eBay listings SHALL be filtered over-ceiling exactly as before. The carve-out SHALL NOT affect the Phase 2 buy gate: a buyer total over the ceiling SHALL remain ineligible to buy regardless of offer settings.
 
 #### Scenario: Phase 2 buy blocked when total exceeds ceiling
 

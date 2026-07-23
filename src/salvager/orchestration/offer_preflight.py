@@ -1,4 +1,4 @@
-"""Offer pre-flight gate (wallapop-offer-flow, FR50-FR57).
+"""Offer pre-flight gate (wallapop-offer-flow, FR58-FR65).
 
 The offer sibling of :class:`Phase2Preflight`: consulted when an
 operator's Ofertar tap arrives, re-checking everything that may have

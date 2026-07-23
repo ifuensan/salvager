@@ -501,3 +501,54 @@ async def test_failure_rows_are_audited(offer_writer: OfferAuditWriter) -> None:
     finally:
         connection.close()
     assert tuple(row) == ("failure", "amount_rejected")
+
+
+class _AuditFailingWriter(OfferAuditWriter):
+    """Writer whose offers INSERT always fails — the post-send audit gap."""
+
+    async def record_offer_attempt(self, attempt: OfferAttemptRecord) -> int:
+        raise RuntimeError("disk full")
+
+
+async def test_audit_failure_after_send_still_reports_success(tmp_path: Path) -> None:
+    # CodeRabbit (PR #55), critical: a failed audit write AFTER a verified
+    # send must never render "No se ha enviado ninguna oferta" (false), must
+    # not count a lockout failure, and must escalate the missing dedupe row.
+    db_path = db_path_under(tmp_path)
+    connection = open_connection(db_path)
+    MigrationRunner().run(connection)
+    connection.close()
+    writer = _AuditFailingWriter(db_path)
+    try:
+        snapshot = _snapshot()
+        session = _FakeOfferSession(_success_result())
+        telegram = _FakeTelegram()
+        reporter = _FakeReporter()
+        entry = _entry()
+        orchestrator = OfferOrchestrator(
+            preflight=OfferPreflight(
+                offer_writer=writer,
+                kill_switch_global=False,
+                lockout_threshold=3,
+                daily_limit=5,
+            ),
+            fetcher=_FakeFetcher(fresh=_listing()),  # type: ignore[arg-type]
+            offer_session=session,
+            offer_writer=writer,
+            telegram_surface=telegram,  # type: ignore[arg-type]
+            store=_FakeStore(snapshot),  # type: ignore[arg-type]
+            reporter=reporter,  # type: ignore[arg-type]
+            wishlist_loader=lambda key: entry if key == _ENTRY_KEY else None,
+            lockout_threshold=3,
+        )
+
+        outcome = await orchestrator.execute_offer_from_callback(_event(snapshot))
+
+        assert isinstance(outcome, OfferOutcomeSuccess)
+        assert outcome.audit_id == 0
+        assert any("Oferta enviada" in r.text for r in telegram.sends)
+        assert not any("No se ha enviado" in r.text for r in telegram.sends)
+        assert EventName.offer_orchestrator_error in reporter.events
+        assert (await writer.read_state()).consecutive_failures == 0
+    finally:
+        await writer.close()

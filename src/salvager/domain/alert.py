@@ -61,7 +61,7 @@ SEVERITY_TOKENS: Final[dict[str, str]] = {
     "phase2_listing": "🟢",
     "phase2_buy_success": "✅",
     "phase2_buy_failure": "🚫",
-    # Wallapop offer surfaces (wallapop-offer-flow; PRD amendment FR50-FR57).
+    # Wallapop offer surfaces (wallapop-offer-flow; PRD amendment FR58-FR65).
     "negotiable_listing": "💰",
     "offer_sent": "💰",
     "offer_failure": "🚫",

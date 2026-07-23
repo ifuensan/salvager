@@ -302,6 +302,12 @@ class WallapopApiFetcher(PageFetcher):
             description=detail.description.original,
             price_eur=Decimal(str(detail.price.cash.amount)),
             fetched_at=datetime.now(UTC),
+            # The detail payload does NOT expose the refurbished flag
+            # (live-probed 2026-07-22) — carry the search-derived value
+            # forward instead of silently resetting it to False, so the
+            # offer path's eligibility never widens on a re-fetch. The
+            # agent goal's missing-button check is the runtime backstop.
+            is_refurbished=listing.is_refurbished,
         )
 
     # ─────────────────────────────────────────────────────────────────

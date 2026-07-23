@@ -882,7 +882,7 @@ def cmd_offer_enable(
         typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
     ] = _DEFAULT_DATA_DIR,
 ) -> None:
-    """Enable Wallapop offers for an entry (wallapop-offer-flow, FR57)."""
+    """Enable Wallapop offers for an entry (wallapop-offer-flow, FR65)."""
     from salvager.cli.commands import offer_cmd
 
     exit_code = offer_cmd.run_enable(
@@ -931,6 +931,10 @@ def cmd_offer_status(
         Path,
         typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
     ] = _DEFAULT_DATA_DIR,
+    config_path: Annotated[
+        Path,
+        typer.Option("--config-path", "-c", help="Path to config.yaml (for offer.daily_limit)."),
+    ] = _DEFAULT_CONFIG_PATH,
     output_format: Annotated[
         str,
         typer.Option("--format", "-f", help="Output format: human | json."),
@@ -938,11 +942,20 @@ def cmd_offer_status(
 ) -> None:
     """Print offer enablement table + lockout/budget state."""
     from salvager.cli.commands import offer_cmd
+    from salvager.config.config_yaml import load_config
 
+    # Best-effort: the budget denominator should reflect the operator's
+    # configured offer.daily_limit, but a missing/broken config.yaml must
+    # not take a read-only status command down with it.
+    try:
+        daily_limit = load_config(config_path).offer.daily_limit
+    except Exception:
+        daily_limit = 5
     exit_code = offer_cmd.run_status(
         wishlist_path=wishlist_path,
         data_dir=data_dir,
         output_format=output_format,
+        daily_limit=daily_limit,
     )
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

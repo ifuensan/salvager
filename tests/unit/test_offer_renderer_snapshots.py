@@ -5,7 +5,7 @@ test renders is exactly what ``salvager dev emit-alert <variant>``
 dispatches, so the golden text here ≡ the on-device capture reference.
 Covers the 4 offer-eligible listing shapes, ``offer_sent``, and the 12
 ``offer_failure_*`` variants — 17 snapshots, locked formats (FR22 +
-FR50-FR57).
+FR58-FR65).
 """
 
 from __future__ import annotations

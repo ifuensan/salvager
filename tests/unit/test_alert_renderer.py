@@ -33,7 +33,7 @@ FIXED_EVALUATED_AT = datetime(2026, 5, 12, 12, 0, 0, tzinfo=UTC)
 
 
 def test_severity_tokens_have_locked_nine_entries() -> None:
-    # Grown by the wallapop-offer-flow PRD amendment (FR50-FR57): the three
+    # Grown by the wallapop-offer-flow PRD amendment (FR58-FR65): the three
     # offer surfaces join the original six.
     assert set(SEVERITY_TOKENS.keys()) == {
         "operational_warn",
