@@ -20,6 +20,7 @@ from salvager.adapters.sqlite_store.migrations import db_path_under
 from salvager.adapters.sqlite_store.offer_writer import OfferAuditWriter
 from salvager.cli.commands import offer_cmd
 from salvager.config.wishlist_yaml import load_wishlist
+from salvager.domain.offer_audit import OfferStateSnapshot
 
 _WISHLIST_YAML = """\
 entries:
@@ -80,8 +81,8 @@ def _engage_lockout(data_dir: Path) -> None:
     asyncio.run(_do())
 
 
-def _read_state(data_dir: Path):
-    async def _do():
+def _read_state(data_dir: Path) -> OfferStateSnapshot:
+    async def _do() -> OfferStateSnapshot:
         writer = OfferAuditWriter(db_path_under(data_dir))
         try:
             return await writer.read_state()

@@ -99,8 +99,8 @@ _WALLAPOP_OFFER_GOAL: Final[str] = (
     "   offer limit is reached, ABORT without submitting — return "
     '{"outcome": "daily_limit_reached", "platform_remaining": 0}.\n'
     "5. Enter the offer amount in the amount field. The field uses a COMMA "
-    "   as the decimal separator (e.g. \"20,22\"); our amounts are whole "
-    "   euros, so enter just the integer (e.g. \"61\"). Verify the field "
+    '   as the decimal separator (e.g. "20,22"); our amounts are whole '
+    '   euros, so enter just the integer (e.g. "61"). Verify the field '
     "   shows EXACTLY that amount before continuing.\n"
     '6. If the form rejects the amount (e.g. "Tu oferta debe ser de al menos '
     '   X €"), ABORT without submitting — return '

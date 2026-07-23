@@ -9,6 +9,7 @@ keyboard-restore guarantee on every outcome.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -71,7 +72,7 @@ def _listing(**overrides: Any) -> Listing:
         "fetched_at": _T0,
     }
     base.update(overrides)
-    return Listing(**base)  # type: ignore[arg-type]
+    return Listing(**base)
 
 
 def _snapshot(listing: Listing | None = None) -> AlertSnapshot:
@@ -166,7 +167,7 @@ class _FakeReporter:
 
 
 @pytest.fixture
-async def offer_writer(tmp_path: Path):
+async def offer_writer(tmp_path: Path) -> AsyncIterator[OfferAuditWriter]:
     db_path = db_path_under(tmp_path)
     connection = open_connection(db_path)
     MigrationRunner().run(connection)
@@ -225,7 +226,9 @@ def _success_result(**overrides: Any) -> OfferSuccess:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-async def test_happy_path_sends_recomputed_amount_and_audits(offer_writer: OfferAuditWriter):
+async def test_happy_path_sends_recomputed_amount_and_audits(
+    offer_writer: OfferAuditWriter,
+) -> None:
     # Asking 70 € against a 70 € ceiling: fit price is 61 €.
     snapshot = _snapshot()
     fetcher = _FakeFetcher(fresh=_listing())
@@ -248,7 +251,7 @@ async def test_happy_path_sends_recomputed_amount_and_audits(offer_writer: Offer
     assert any("Oferta enviada" in b.text for row in last_keyboard for b in row)
 
 
-async def test_success_on_phase2_alert_keeps_comprar_row(offer_writer: OfferAuditWriter):
+async def test_success_on_phase2_alert_keeps_comprar_row(offer_writer: OfferAuditWriter) -> None:
     listing = _listing(price_eur=Decimal("55.00"))
     snapshot = _snapshot(listing).model_copy(
         update={"phase": "phase2", "phase2_max_price_eur": Decimal("70.00")}
@@ -274,7 +277,7 @@ async def test_success_on_phase2_alert_keeps_comprar_row(offer_writer: OfferAudi
 # ─────────────────────────────────────────────────────────────────────────
 
 
-async def test_listing_gone_aborts_fail_closed(offer_writer: OfferAuditWriter):
+async def test_listing_gone_aborts_fail_closed(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     fetcher = _FakeFetcher(error=WallapopApiError(404, "not found"))
     session = _FakeOfferSession()
@@ -294,7 +297,7 @@ async def test_listing_gone_aborts_fail_closed(offer_writer: OfferAuditWriter):
     assert any("Ofertar" in b.text for row in last_keyboard for b in row)
 
 
-async def test_price_rise_beyond_tolerance_aborts(offer_writer: OfferAuditWriter):
+async def test_price_rise_beyond_tolerance_aborts(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()  # displayed fit: 61 €
     fetcher = _FakeFetcher(fresh=_listing(price_eur=Decimal("95.00")))  # fit now impossible
     session = _FakeOfferSession()
@@ -310,7 +313,7 @@ async def test_price_rise_beyond_tolerance_aborts(offer_writer: OfferAuditWriter
     assert (await offer_writer.read_state()).consecutive_failures == 0
 
 
-async def test_reserved_on_refetch_aborts(offer_writer: OfferAuditWriter):
+async def test_reserved_on_refetch_aborts(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     fetcher = _FakeFetcher(fresh=_listing(is_reserved=True))
     session = _FakeOfferSession()
@@ -325,7 +328,7 @@ async def test_reserved_on_refetch_aborts(offer_writer: OfferAuditWriter):
     assert session.calls == []
 
 
-async def test_duplicate_offer_blocked_before_execution(offer_writer: OfferAuditWriter):
+async def test_duplicate_offer_blocked_before_execution(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     await offer_writer.record_offer_attempt(
         OfferAttemptRecord(
@@ -353,7 +356,7 @@ async def test_duplicate_offer_blocked_before_execution(offer_writer: OfferAudit
     assert session.calls == []
 
 
-async def test_daily_budget_blocks_before_execution(offer_writer: OfferAuditWriter):
+async def test_daily_budget_blocks_before_execution(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     now = datetime.now(UTC)
     for n in range(2):
@@ -387,7 +390,7 @@ async def test_daily_budget_blocks_before_execution(offer_writer: OfferAuditWrit
     assert (await offer_writer.read_state()).consecutive_failures == 0
 
 
-async def test_kill_switch_blocks(offer_writer: OfferAuditWriter):
+async def test_kill_switch_blocks(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     orchestrator, _, _ = _orchestrator(
         offer_writer=offer_writer,
@@ -403,7 +406,7 @@ async def test_kill_switch_blocks(offer_writer: OfferAuditWriter):
     assert outcome.rendered_as is OfferFailureReason.lockout_engaged
 
 
-async def test_snapshot_missing_restores_keyboard(offer_writer: OfferAuditWriter):
+async def test_snapshot_missing_restores_keyboard(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     orchestrator, telegram, _ = _orchestrator(
         offer_writer=offer_writer,
@@ -426,7 +429,7 @@ async def test_snapshot_missing_restores_keyboard(offer_writer: OfferAuditWriter
 
 async def test_execution_failure_counts_and_third_engages_lockout(
     offer_writer: OfferAuditWriter,
-):
+) -> None:
     snapshot = _snapshot()
     session = _FakeOfferSession(
         OfferSendFailure(reason=OfferFailureReason.timeout, ctx={"detail": "x"})
@@ -457,7 +460,7 @@ async def test_execution_failure_counts_and_third_engages_lockout(
     assert len(telegram.keyboard_edits) == 4
 
 
-async def test_platform_daily_limit_failure_never_counts(offer_writer: OfferAuditWriter):
+async def test_platform_daily_limit_failure_never_counts(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     session = _FakeOfferSession(
         OfferSendFailure(
@@ -478,7 +481,7 @@ async def test_platform_daily_limit_failure_never_counts(offer_writer: OfferAudi
     assert (await offer_writer.read_state()).consecutive_failures == 0
 
 
-async def test_failure_rows_are_audited(offer_writer: OfferAuditWriter):
+async def test_failure_rows_are_audited(offer_writer: OfferAuditWriter) -> None:
     snapshot = _snapshot()
     session = _FakeOfferSession(OfferSendFailure(reason=OfferFailureReason.amount_rejected, ctx={}))
     orchestrator, _, _ = _orchestrator(
