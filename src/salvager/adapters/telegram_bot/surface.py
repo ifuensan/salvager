@@ -59,7 +59,7 @@ from salvager.observability.logging import get_logger
 #: Pause-between-retries in seconds. Defaults give ~3 attempts in ~20s.
 DEFAULT_RETRY_DELAYS: tuple[float, ...] = (5.0, 15.0)
 
-_KNOWN_VERBS: frozenset[str] = frozenset({"view", "skip", "snooze", "buy"})
+_KNOWN_VERBS: frozenset[str] = frozenset({"view", "skip", "snooze", "buy", "offer"})
 
 
 @runtime_checkable

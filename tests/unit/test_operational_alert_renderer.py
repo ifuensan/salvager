@@ -110,6 +110,29 @@ _FIXTURES: dict[EventName, tuple[Severity, dict[str, Any]]] = {
             "alert_id": "12345678-1234-1234-1234-123456789abc",
         },
     ),
+    EventName.offer_lockout_engaged: (
+        "warn",
+        {
+            "consecutive_failures": 3,
+            "threshold": 3,
+            "last_affected_entry": "Corsair Vengeance LPX 16GB / CMK16GX4M2D3000C16",
+        },
+    ),
+    EventName.offer_disabled: (
+        "warn",
+        {"reason": "kill_switch_global"},
+    ),
+    EventName.offer_re_enabled: (
+        "info",
+        {"entry": "Corsair Vengeance LPX 16GB / CMK16GX4M2D3000C16"},
+    ),
+    EventName.offer_orchestrator_error: (
+        "warn",
+        {
+            "error_class": "TinyFishSessionLost",
+            "alert_id": "12345678-1234-1234-1234-123456789abc",
+        },
+    ),
 }
 
 

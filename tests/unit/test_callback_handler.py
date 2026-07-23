@@ -448,7 +448,7 @@ async def test_audit_row_written_before_keyboard_edit() -> None:
 
 async def test_buy_verb_is_in_handled_verbs() -> None:
     assert "buy" in HANDLED_VERBS
-    assert frozenset({"view", "skip", "snooze", "buy"}) == HANDLED_VERBS
+    assert frozenset({"view", "skip", "snooze", "buy", "offer"}) == HANDLED_VERBS
 
 
 async def test_buy_verb_edits_keyboard_to_comprando_and_fires_orchestrator() -> None:

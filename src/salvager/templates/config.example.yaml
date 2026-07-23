@@ -103,6 +103,26 @@ alerts:
   price_drop_ping_pct: 10
 
 # ─────────────────────────────────────────────────────────────────────────
+# offer — Wallapop "hacer oferta" flow (wallapop-offer-flow)
+# ─────────────────────────────────────────────────────────────────────────
+offer:
+  # Wallapop listings on offer-enabled entries with a buyer total over the
+  # ceiling but within ceiling × (1 + band_pct) produce a negotiable alert
+  # (💰 Ofertar, no Comprar) instead of being filtered. Wallapop's own
+  # -30 % offer floor makes bands much past 0.40 useless.
+  band_pct: 0.20
+  # Self-imposed budget of successful offer sends per rolling 24 h.
+  # Wallapop allows 10 offers per calendar day per account; keeping this
+  # under it leaves headroom for your own manual offers.
+  daily_limit: 5
+  # Consecutive execution failures that disable the offer path until
+  # `salvager offer enable` clears it. Independent from the Phase 2
+  # circuit breaker — offer failures never block real buys.
+  lockout_threshold: 3
+  # Master off-switch for offer sending, regardless of per-entry settings.
+  kill_switch_global: false
+
+# ─────────────────────────────────────────────────────────────────────────
 # telegram — delivery semantics (NFR-I6)
 # ─────────────────────────────────────────────────────────────────────────
 telegram:

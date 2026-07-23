@@ -145,6 +145,31 @@ class AlertsConfig(BaseModel):
     price_drop_ping_pct: Annotated[Decimal, Field(ge=0)] = Decimal("10")
 
 
+class OfferConfig(BaseModel):
+    """Wallapop offer-flow knobs (wallapop-offer-flow).
+
+    ``band_pct`` widens the alert gate for offer-enabled entries: Wallapop
+    listings with a buyer total over the ceiling but within ``ceiling x
+    (1 + band_pct)`` produce a negotiable alert instead of being filtered.
+    Wallapop's own -30 % offer floor makes bands much past ~0.40 useless
+    (such listings can never be offered into the ceiling anyway).
+
+    ``daily_limit`` is the self-imposed budget of successful offer sends per
+    rolling 24 h — deliberately under Wallapop's cap of 10 offers per
+    calendar day per account, leaving headroom for the operator's own manual
+    offers. ``lockout_threshold`` consecutive execution failures disable the
+    offer path until ``salvager offer enable`` clears it (independent from
+    the Phase 2 circuit breaker). ``kill_switch_global`` disables offer
+    sending unconditionally."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    band_pct: Annotated[Decimal, Field(ge=0, le=1)] = Decimal("0.20")
+    daily_limit: Annotated[int, Field(ge=1, le=10)] = 5
+    lockout_threshold: Annotated[int, Field(ge=1)] = 3
+    kill_switch_global: bool = False
+
+
 class LoggingConfig(BaseModel):
     """Structured-log threshold + output format (NFR-O1, NFR-O4).
 
@@ -202,6 +227,7 @@ class ConfigModel(BaseModel):
     wallapop: WallapopConfig = Field(default_factory=WallapopConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    offer: OfferConfig = Field(default_factory=OfferConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)

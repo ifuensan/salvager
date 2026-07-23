@@ -261,3 +261,28 @@ class BuyFailureReason(enum.Enum):
     timeout = "timeout"
     screenshot_missing = "screenshot_missing"
     payment_rail_unavailable = "payment_rail_unavailable"
+
+
+@enum.unique
+class OfferFailureReason(enum.Enum):
+    """Closed set of reasons a Wallapop offer can abort or fail.
+
+    Deliberately separate from :class:`BuyFailureReason` — both are closed
+    sets that render tables and variant-count pins treat as exhaustive, and
+    they evolve independently (wallapop-offer-flow design D9). Every variant
+    is renderable by the offer failure renderer; adding a variant requires a
+    PRD amendment AND a render-table entry, never a silent fall-through.
+    """
+
+    listing_gone = "listing_gone"
+    reconciliation_tripped = "reconciliation_tripped"
+    offer_unavailable = "offer_unavailable"
+    amount_rejected = "amount_rejected"
+    daily_limit_reached = "daily_limit_reached"
+    duplicate_offer = "duplicate_offer"
+    lockout_engaged = "lockout_engaged"
+    missing_element = "missing_element"
+    marketplace_error = "marketplace_error"
+    timeout = "timeout"
+    screenshot_missing = "screenshot_missing"
+    ui_check_failed = "ui_check_failed"

@@ -383,3 +383,22 @@ If any **critical** anomaly per the checklist (emoji collapse under
 simulator · primary command unnavigable in VoiceOver · severity emoji
 corruption on a Telegram client), flip to `BLOCKED — <one-line reason>`
 and open a release-gating bug.
+
+---
+
+## Pending delta — wallapop-make-offer (2026-07-23)
+
+The offer flow (OpenSpec change `wallapop-make-offer`) adds 21 rendering
+variants to the catalog (registry 45 → 66): 2 negotiable listing shapes,
+2 with-offer listing shapes, `offer_sent`, 12 `offer_failure_*`, and 4
+operational events. When the change ships in a release:
+
+- the code-level audit extends over the new surfaces (golden snapshots
+  already pin all 34 text+keyboard variants in
+  `tests/unit/__snapshots__/test_offer_renderer_snapshots.ambr`);
+- the on-device capture pass gains the emit-able newcomers
+  (`dev emit-alert negotiable_listing_direct`, `offer_sent`, the 12
+  failures) plus a colorblind glance at the `💰` token (informational —
+  the banner word/keyboard carries state, per the §2 rule);
+- the live-event items mirror the buy path: one real Ofertar tap
+  eyeballed through `🟡 Ofertando…` → `💰 Oferta enviada` / restored row.

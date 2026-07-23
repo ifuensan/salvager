@@ -357,6 +357,7 @@ def _item_to_listing(item: WallapopApiItem) -> Listing:
         published_at=_unix_millis_to_dt(item.created_at),
         fetched_at=datetime.now(UTC),
         is_reserved=bool(item.reserved and item.reserved.flag),
+        is_refurbished=bool(item.is_refurbished and item.is_refurbished.flag),
     )
 
 

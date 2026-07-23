@@ -124,10 +124,16 @@ def _group_of(variant_name: str) -> str:
         return "phase1 listing"
     if variant_name.startswith("phase2_listing"):
         return "phase2 listing"
+    if variant_name.startswith("negotiable_listing"):
+        return "negotiable listing"
     if variant_name.startswith("buy_success"):
         return "phase2 buy success"
     if variant_name.startswith("buy_failure_"):
         return "phase2 buy failure"
+    if variant_name == "offer_sent":
+        return "offer sent"
+    if variant_name.startswith("offer_failure_"):
+        return "offer failure"
     return "operational"
 
 

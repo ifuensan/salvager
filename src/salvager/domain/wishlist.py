@@ -56,6 +56,22 @@ class Phase2Settings(BaseModel):
     max_price_eur: Decimal | None = None
 
 
+class OfferSettings(BaseModel):
+    """Per-entry Wallapop offer settings (wallapop-offer-flow).
+
+    ``enabled`` gates the whole offer surface for the entry (Ofertar button,
+    negotiable-band alerts); toggled via ``salvager offer enable/disable``
+    like its Phase 2 sibling. ``target_total_eur`` optionally aims offers at a
+    delivered total BELOW the entry ceiling ("I'd accept 80 € but I want to
+    pay 70 €"); ``None`` targets the effective ceiling (``max_price_solo``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    target_total_eur: Decimal | None = None
+
+
 class WishlistEntry(BaseModel):
     """One declared wish — what the operator is hunting and at what ceiling.
 
@@ -75,6 +91,7 @@ class WishlistEntry(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     container_keywords: list[str] = Field(default_factory=list)
     phase2: Phase2Settings = Field(default_factory=Phase2Settings)
+    offer: OfferSettings = Field(default_factory=OfferSettings)
     confidence_threshold: ConfidenceThreshold
 
     @model_validator(mode="after")

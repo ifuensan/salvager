@@ -66,7 +66,7 @@ class CallbackAudit(BaseModel):
     alert_id: UUID
     telegram_message_id: int
     callback_data: str
-    verb: Literal["view", "skip", "snooze", "buy"]
+    verb: Literal["view", "skip", "snooze", "buy", "offer"]
     chat_id: int
     occurred_at: datetime
 

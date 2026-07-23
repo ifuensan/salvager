@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -50,6 +51,7 @@ from salvager.adapters.sqlite_store.migrations import (
     MigrationRunner,
     db_path_under,
 )
+from salvager.adapters.sqlite_store.offer_writer import OfferAuditWriter
 from salvager.adapters.sqlite_store.phase2_state_reader import (
     SqlitePhase2StateReader,
 )
@@ -60,6 +62,7 @@ from salvager.adapters.tinyfish_browser.marketplace_dispatch import (
     MarketplaceDispatchingBrowser,
     MarketplaceDispatchingPageFetcher,
 )
+from salvager.adapters.tinyfish_browser.wallapop_offer import WallapopOfferFlow
 from salvager.adapters.tinyfish_browser.wallapop_pay import WallapopPayFlow
 from salvager.adapters.wallapop_api.fetcher import WallapopApiFetcher
 from salvager.adapters.wallapop_tinyfish.fetcher import (
@@ -86,6 +89,8 @@ from salvager.orchestration.circuit_breaker import CircuitBreaker
 from salvager.orchestration.daemon import Daemon
 from salvager.orchestration.degradation_reporter import DegradationReporter
 from salvager.orchestration.health_state import HealthState
+from salvager.orchestration.offer_orchestrator import OfferOrchestrator
+from salvager.orchestration.offer_preflight import OfferPreflight
 from salvager.orchestration.phase2_parsers import default_price_parser_registry
 from salvager.orchestration.phase2_preflight import Phase2Preflight
 from salvager.orchestration.poll_loop import run_poll_cycle
@@ -144,6 +149,10 @@ class ComposedDaemon:
     _phase2_wallapop_pay: WallapopPayFlow
     _phase2_ebay_checkout: EbayCheckoutFlow
     _phase2_recon_fetcher: MarketplaceDispatchingPageFetcher
+    #: Offer-flow handles (wallapop-offer-flow); None when the daemon was
+    #: composed without Wallapop credentials (offers are Wallapop-only).
+    _offer_writer: OfferAuditWriter | None = None
+    _offer_flow: WallapopOfferFlow | None = None
 
     async def aclose(self) -> None:
         """Close every adapter that owns OS resources. Idempotent —
@@ -155,14 +164,20 @@ class ComposedDaemon:
         handle has been given its chance to close, preserving the
         shutdown-surfaces-errors contract.
         """
-        closers = (
-            self._phase2_wallapop_pay.close,
-            self._phase2_ebay_checkout.close,
-            self._phase2_recon_fetcher.aclose,
-            self._phase2_audit_writer.close,
-            self._phase2_state_reader.close,
-            self.cache.close,
-            self.store.close,
+        closers = tuple(
+            closer
+            for closer in (
+                self._phase2_wallapop_pay.close,
+                self._phase2_ebay_checkout.close,
+                self._phase2_recon_fetcher.aclose,
+                self._phase2_audit_writer.close,
+                self._phase2_state_reader.close,
+                self._offer_flow.close if self._offer_flow is not None else None,
+                self._offer_writer.close if self._offer_writer is not None else None,
+                self.cache.close,
+                self.store.close,
+            )
+            if closer is not None
         )
         log = get_logger("orchestration.composer")
         errors: list[Exception] = []
@@ -267,6 +282,25 @@ def compose_daemon(
         ebay_quota=ebay_quota,
     )
 
+    # Offer flow (wallapop-offer-flow) — Wallapop-only, so composed only
+    # when the daemon has Wallapop credentials. Like the buy orchestrator
+    # it fires only on an operator Ofertar tap; entries opt in via
+    # `offer.enabled` (toggled by `salvager offer enable`).
+    offer = (
+        _build_offer_orchestrator(
+            env=env,
+            config=config,
+            data_dir=data_dir,
+            wishlist_path=Path(wishlist_path),
+            store=store,
+            telegram=telegram,
+            reporter=reporter,
+            wallapop_cookies_path=wallapop_cookies_path,
+        )
+        if wallapop_enabled
+        else None
+    )
+
     alerts_policy = AlertUpdatePolicy(
         watch_days=config.alerts.watch_days,
         min_price_drop_pct=config.alerts.min_price_drop_pct,
@@ -284,6 +318,8 @@ def compose_daemon(
         reporter=reporter,
         phase2_preflight=phase2.preflight,
         alerts_policy=alerts_policy,
+        offer_band_pct=config.offer.band_pct if offer is not None else None,
+        has_offered=offer.offer_writer.has_successful_offer if offer is not None else None,
         log=log,
     )
     ebay_job = _build_ebay_job(
@@ -333,6 +369,7 @@ def compose_daemon(
         store=store,
         surface=telegram,
         buy_orchestrator=phase2.orchestrator,
+        offer_orchestrator=offer.orchestrator if offer is not None else None,
         snooze_hours=DEFAULT_SNOOZE_HOURS,
     )
 
@@ -347,6 +384,8 @@ def compose_daemon(
         _phase2_wallapop_pay=phase2.wallapop_pay,
         _phase2_ebay_checkout=phase2.ebay_checkout,
         _phase2_recon_fetcher=phase2.recon_fetcher,
+        _offer_writer=offer.offer_writer if offer is not None else None,
+        _offer_flow=offer.offer_flow if offer is not None else None,
     )
 
 
@@ -427,6 +466,8 @@ def _build_wallapop_job(
     reporter: DegradationReporter,
     phase2_preflight: Phase2Preflight,
     alerts_policy: AlertUpdatePolicy,
+    offer_band_pct: Decimal | None,
+    has_offered: Callable[[str, str], Awaitable[bool]] | None,
     log: object,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the Wallapop poll closure, or return None when cookies are missing."""
@@ -461,6 +502,8 @@ def _build_wallapop_job(
             telegram=telegram,
             phase2_preflight=phase2_preflight,
             alerts_policy=alerts_policy,
+            offer_band_pct=offer_band_pct,
+            has_offered=has_offered,
         )
         # Persist the API-path health to `_meta` so `health` can report
         # "wallapop_api degraded / wallapop_tinyfish healthy" without
@@ -721,6 +764,75 @@ def _build_buy_orchestrator(
         wallapop_pay=wallapop_pay,
         ebay_checkout=ebay_checkout,
         recon_fetcher=recon_fetcher,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Offer orchestrator wiring — wallapop-offer-flow
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _OfferBundle:
+    """Output of :func:`_build_offer_orchestrator` — the orchestrator plus
+    the OS-resource handles :class:`ComposedDaemon` closes on shutdown."""
+
+    orchestrator: OfferOrchestrator
+    offer_writer: OfferAuditWriter
+    offer_flow: WallapopOfferFlow
+
+
+def _build_offer_orchestrator(
+    *,
+    env: EnvSettings,
+    config: ConfigModel,
+    data_dir: Path,
+    wishlist_path: Path,
+    store: SqliteStore,
+    telegram: TelegramBotSurface,
+    reporter: DegradationReporter,
+    wallapop_cookies_path: Path,
+) -> _OfferBundle:
+    """Wire the offer orchestrator (wallapop-offer-flow).
+
+    Fires only on an operator Ofertar tap — no autonomous trigger. The
+    reconciliation re-fetch uses its own stateless Wallapop fetcher
+    duplicate (same pattern as the buy reconciler's).
+    """
+    db_path = db_path_under(data_dir)
+    offer_writer = OfferAuditWriter(db_path)
+
+    preflight = OfferPreflight(
+        offer_writer=offer_writer,
+        kill_switch_global=config.offer.kill_switch_global,
+        lockout_threshold=config.offer.lockout_threshold,
+        daily_limit=config.offer.daily_limit,
+    )
+    offer_flow = WallapopOfferFlow(api_key=env.TINYFISH_API_KEY)
+    refetch: PageFetcher = WallapopApiFetcher(
+        cookies_path=wallapop_cookies_path,
+        latitude=config.wallapop.latitude,
+        longitude=config.wallapop.longitude,
+    )
+
+    orchestrator = OfferOrchestrator(
+        preflight=preflight,
+        fetcher=refetch,
+        offer_session=offer_flow,
+        offer_writer=offer_writer,
+        telegram_surface=telegram,
+        store=store,
+        reporter=reporter,
+        wishlist_loader=_make_wishlist_loader(wishlist_path),
+        lockout_threshold=config.offer.lockout_threshold,
+        tolerance_eur=config.phase2.reconciliation_tolerance_eur,
+        tolerance_pct=config.phase2.reconciliation_tolerance_pct,
+        assumed_shipping_eur=config.pricing.assumed_shipping_eur,
+    )
+    return _OfferBundle(
+        orchestrator=orchestrator,
+        offer_writer=offer_writer,
+        offer_flow=offer_flow,
     )
 
 

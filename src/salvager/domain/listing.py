@@ -64,6 +64,12 @@ class Listing(BaseModel):
     published_at: datetime | None = None
     fetched_at: datetime
     is_reserved: bool = False
+    #: Wallapop marks refurbished listings in the search payload
+    #: (``is_refurbished.flag``, live-probed 2026-07-22). Refurbished
+    #: products don't accept offers, so the offer surface pre-filters on
+    #: this instead of burning a tap on a guaranteed ``offer_unavailable``.
+    #: ``False`` = not refurbished or marketplace doesn't expose it.
+    is_refurbished: bool = False
 
     # Set by the LLM evaluator; None pre-evaluation.
     entry_key_match: tuple[str, str, str] | None = None

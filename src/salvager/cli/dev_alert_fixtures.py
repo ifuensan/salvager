@@ -1,9 +1,11 @@
 """Variant → :class:`RenderedAlert` registry — Story 5.17 release-audit.
 
-One closed map: every release-gate variant name (45 entries at v0.4.x:
-37 at the original v1.0 audit + ``listing_gone`` at v0.4.1 + the 💶
-buyer-total and edit-surface variants added by the v0.4.3 re-audit)
-to a zero-arg builder that returns a :class:`RenderedAlert`. The
+One closed map: every release-gate variant name (66 entries: 45 at
+v0.4.4 — 37 at the original v1.0 audit + ``listing_gone`` at v0.4.1 +
+the 💶 buyer-total and edit-surface variants of the v0.4.3 re-audit —
+plus the 21 wallapop-offer-flow surfaces: 4 offer-eligible listing
+shapes, ``offer_sent``, 12 offer failures, 4 operational events) to a
+zero-arg builder that returns a :class:`RenderedAlert`. The
 fixture data mirrors what the snapshot tests use, so the dispatched
 Telegram message and the file under
 ``docs/release-audits/v1.0/reference-text/<variant>.txt`` are
@@ -33,6 +35,9 @@ from salvager.domain.alert import (
     Severity,
     apply_update_banner,
     phase2_dead_reserved_row,
+    render_negotiable_listing_alert,
+    render_offer_failure,
+    render_offer_sent,
     render_operational_alert,
     render_phase1_listing_alert,
     render_phase2_buy_failure,
@@ -41,7 +46,7 @@ from salvager.domain.alert import (
     render_price_drop_ping,
     update_banner_line,
 )
-from salvager.domain.errors import BuyFailureReason
+from salvager.domain.errors import BuyFailureReason, OfferFailureReason
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 from salvager.domain.phase2_audit import TransactionRecord
@@ -231,6 +236,94 @@ def _price_drop_ping() -> RenderedAlert:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Offer-surface builders — wallapop-offer-flow
+# ─────────────────────────────────────────────────────────────────────────
+
+#: Negotiable fixture: 70 € asking against a 60 € target → 51 € fit
+#: (largest whole euro with item + 3,50 shipping buffer + Protección ≤ 60,
+#: and ≥ 70 % of asking). Values pinned as literals so a pricing change
+#: breaks these fixtures loudly instead of silently re-deriving.
+_NEGOTIABLE_ASKING = Decimal("70.00")
+_OFFER_TARGET = Decimal("60.00")
+_OFFER_FIT = Decimal("51")
+#: Lower-target fixture on an under-ceiling listing: 55 € asking, 50 €
+#: target → 42 € fit.
+_UNDER_TARGET = Decimal("50.00")
+_UNDER_FIT = Decimal("42")
+
+
+def _negotiable_direct() -> RenderedAlert:
+    overrides: dict[str, Any] = {"price_eur": _NEGOTIABLE_ASKING}
+    return render_negotiable_listing_alert(
+        _snapshot(phase="negotiable", listing_overrides=overrides),
+        offer_eur=_OFFER_FIT,
+        offer_target_total_eur=_OFFER_TARGET,
+        buyer_cost=_cost(_listing(**overrides)),
+    )
+
+
+def _negotiable_missing_photo() -> RenderedAlert:
+    overrides: dict[str, Any] = {"price_eur": _NEGOTIABLE_ASKING, "photo_urls": []}
+    return render_negotiable_listing_alert(
+        _snapshot(phase="negotiable", listing_overrides=overrides),
+        offer_eur=_OFFER_FIT,
+        offer_target_total_eur=_OFFER_TARGET,
+        buyer_cost=_cost(_listing(**overrides)),
+    )
+
+
+def _phase1_with_offer() -> RenderedAlert:
+    return render_phase1_listing_alert(
+        _snapshot(),
+        buyer_cost=_cost(_listing()),
+        offer_eur=_UNDER_FIT,
+        offer_target_total_eur=_UNDER_TARGET,
+    )
+
+
+def _phase2_with_offer() -> RenderedAlert:
+    return render_phase2_listing_alert(
+        _snapshot(phase="phase2"),
+        _PHASE2_MAX,
+        buyer_cost=_cost(_listing()),
+        offer_eur=_UNDER_FIT,
+        offer_target_total_eur=_UNDER_TARGET,
+    )
+
+
+def _offer_sent() -> RenderedAlert:
+    return render_offer_sent(
+        entry_display_name=_ENTRY_DISPLAY,
+        offered_eur=_OFFER_FIT,
+        audit_id=7,
+        screenshot_path="https://placehold.co/600x400/png?text=Oferta+enviada",
+        platform_remaining=9,
+    )
+
+
+_GENERIC_OFFER_FAILURE_CTX: Final[dict[str, Any]] = {
+    "displayed_offer": _OFFER_FIT,
+    "recomputed_offer": Decimal("49"),
+    "offered": _OFFER_FIT,
+    "limit_source": "propio",
+    "consecutive_failures": 3,
+    "threshold": 3,
+    "missing": ["offer_button"],
+    "error_class": "TinyFishUnavailable",
+}
+
+
+def _make_offer_failure(reason: OfferFailureReason) -> Callable[[], RenderedAlert]:
+    def _build() -> RenderedAlert:
+        return render_offer_failure(
+            reason, entry_display_name=_ENTRY_DISPLAY, ctx=_GENERIC_OFFER_FAILURE_CTX
+        )
+
+    _build.__name__ = f"_offer_failure_{reason.value}"
+    return _build
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Phase 2 buy success + failure builders
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -343,6 +436,16 @@ _OPERATIONAL_FIXTURES: Final[dict[EventName, tuple[Severity, dict[str, Any]]]] =
         "warn",
         {"error_class": "TinyFishSessionLost", "alert_id": str(_FIXED_ALERT_ID)},
     ),
+    EventName.offer_lockout_engaged: (
+        "warn",
+        {"consecutive_failures": 3, "threshold": 3, "last_affected_entry": _ENTRY_DISPLAY},
+    ),
+    EventName.offer_disabled: ("warn", {"reason": "kill_switch_global"}),
+    EventName.offer_re_enabled: ("info", {"entry": _ENTRY_DISPLAY}),
+    EventName.offer_orchestrator_error: (
+        "warn",
+        {"error_class": "TinyFishSessionLost", "alert_id": str(_FIXED_ALERT_ID)},
+    ),
 }
 
 
@@ -377,9 +480,16 @@ def _build_registry() -> dict[str, Callable[[], RenderedAlert]]:
         "phase2_listing_edited_reserved": _phase2_edited_reserved,
         "price_drop_ping": _price_drop_ping,
         "buy_success": _buy_success,
+        "negotiable_listing_direct": _negotiable_direct,
+        "negotiable_listing_missing_photo": _negotiable_missing_photo,
+        "phase1_listing_with_offer": _phase1_with_offer,
+        "phase2_listing_with_offer": _phase2_with_offer,
+        "offer_sent": _offer_sent,
     }
     for reason in BuyFailureReason:
         registry[f"buy_failure_{reason.value}"] = _make_buy_failure(reason)
+    for offer_reason in OfferFailureReason:
+        registry[f"offer_failure_{offer_reason.value}"] = _make_offer_failure(offer_reason)
     for event in _OPERATIONAL_FIXTURES:
         registry[event.value] = _make_operational(event)
     return registry

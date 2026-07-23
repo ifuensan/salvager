@@ -42,7 +42,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid as uuid_module
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -52,6 +52,7 @@ from uuid import UUID
 from salvager.domain.alert import (
     AlertSnapshot,
     Phase,
+    render_negotiable_listing_alert,
     render_phase1_listing_alert,
     render_phase2_listing_alert,
 )
@@ -64,6 +65,7 @@ from salvager.domain.pricing import (
     DEFAULT_ASSUMED_SHIPPING_EUR,
     buyer_cost,
     buyer_total_eur,
+    offer_item_price_eur,
 )
 from salvager.domain.wishlist import Wishlist, WishlistEntry
 from salvager.interfaces.listing_evaluator import ListingEvaluator
@@ -127,6 +129,8 @@ async def run_poll_cycle(
     max_concurrent_evaluations: int = DEFAULT_MAX_CONCURRENT_EVALUATIONS,
     clock: Callable[[], datetime] = _utc_now,
     new_alert_id: Callable[[], UUID] = uuid_module.uuid4,
+    offer_band_pct: Decimal | None = None,
+    has_offered: Callable[[str, str], Awaitable[bool]] | None = None,
 ) -> PollCycleSummary:
     """Run one poll cycle for ``marketplace`` against every wishlist entry.
 
@@ -231,6 +235,7 @@ async def run_poll_cycle(
             assumed_import_charges_eur=import_buffer,
             now=now,
             log=log,
+            has_offered=has_offered,
         )
 
         candidates = await _filter_unseen(listings, entry, store)
@@ -270,7 +275,7 @@ async def run_poll_cycle(
         # before the LLM eval so an over-ceiling listing never costs an
         # evaluation or reaches the alert path (shipping-aware-pricing,
         # ebay-import-charges-pricing).
-        buyable = await _filter_over_ceiling(
+        buyable, negotiable = await _filter_over_ceiling(
             buyable,
             entry,
             store,
@@ -279,12 +284,19 @@ async def run_poll_cycle(
             assumed_import_charges_eur=import_buffer,
             marketplace=marketplace,
             log=log,
+            offer_band_pct=offer_band_pct,
         )
 
-        if not buyable:
+        if not buyable and not negotiable:
             continue
 
-        evaluations = await _evaluate_concurrently(buyable, entry, evaluator, semaphore, log)
+        # Negotiable-band listings ride the same evaluation + confidence
+        # gate as ordinary candidates (junk in the band must not alert just
+        # because it is cheap-ish); the tag only changes the renderer.
+        negotiable_ids = {listing.listing_id for listing in negotiable}
+        evaluations = await _evaluate_concurrently(
+            buyable + negotiable, entry, evaluator, semaphore, log
+        )
 
         for listing, evaluation in evaluations:
             if evaluation is None:
@@ -305,6 +317,8 @@ async def run_poll_cycle(
                     new_alert_id=new_alert_id,
                     clock=clock,
                     log=log,
+                    negotiable=listing.listing_id in negotiable_ids,
+                    has_offered=has_offered,
                 )
                 if handled:
                     summary.alerts_sent += 1
@@ -402,8 +416,9 @@ async def _filter_over_ceiling(
     assumed_import_charges_eur: Decimal,
     marketplace: Marketplace,
     log: object,
-) -> list[Listing]:
-    """Drop listings whose delivered buyer total exceeds the entry ceiling.
+    offer_band_pct: Decimal | None = None,
+) -> tuple[list[Listing], list[Listing]]:
+    """Split listings into ``(within_ceiling, negotiable)``; drop the rest.
 
     The search pre-filter caps the *item* price; this is the authoritative
     gate on the total the buyer actually pays (item + shipping + Wallapop
@@ -411,11 +426,19 @@ async def _filter_over_ceiling(
     ceiling but over it once shipping/fees are added is dropped here, before
     the LLM eval, and recorded as seen + counted as dropped — mirroring the
     below-threshold drop path.
+
+    Single carve-out (wallapop-offer-flow): a Wallapop listing on an
+    offer-enabled entry whose buyer total is over the ceiling but within
+    ``ceiling x (1 + offer_band_pct)`` — AND for which a valid offer amount
+    exists (the platform's -30 % floor can rule one out) — is kept in the
+    ``negotiable`` bucket instead of dropped. eBay and offer-disabled
+    entries never populate it.
     """
     ceiling = _entry_ceiling(entry)
     if ceiling is None:
-        return buyable
+        return buyable, []
     within: list[Listing] = []
+    negotiable: list[Listing] = []
     for listing in buyable:
         total = buyer_total_eur(
             listing,
@@ -424,6 +447,31 @@ async def _filter_over_ceiling(
         )
         if total <= ceiling:
             within.append(listing)
+            continue
+        if (
+            offer_band_pct is not None
+            and entry.offer.enabled
+            and listing.marketplace == "wallapop"
+            and not listing.is_refurbished
+            and total <= ceiling * (1 + offer_band_pct)
+            and offer_item_price_eur(
+                listing,
+                target_total_eur=entry.offer.target_total_eur or ceiling,
+                assumed_shipping_eur=assumed_shipping_eur,
+            )
+            is not None
+        ):
+            negotiable.append(listing)
+            log.info(  # type: ignore[attr-defined]
+                "listing_kept_negotiable_band",
+                extra={
+                    "marketplace": marketplace,
+                    "entry_display_name": entry.display_name,
+                    "listing_id": listing.listing_id,
+                    "buyer_total_eur": str(total),
+                    "ceiling_eur": str(ceiling),
+                },
+            )
             continue
         summary.dropped_count += 1
         log.info(  # type: ignore[attr-defined]
@@ -448,7 +496,7 @@ async def _filter_over_ceiling(
                     "error_class": exc.__class__.__name__,
                 },
             )
-    return within
+    return within, negotiable
 
 
 async def _filter_unseen(
@@ -597,6 +645,8 @@ async def _dispatch_alert(
     new_alert_id: Callable[[], UUID],
     clock: Callable[[], datetime],
     log: object,
+    negotiable: bool = False,
+    has_offered: Callable[[str, str], Awaitable[bool]] | None = None,
 ) -> bool:
     """Build snapshot → render → send → persist. Return True on full success.
 
@@ -611,13 +661,20 @@ async def _dispatch_alert(
     duplicate-eval on the next pass, but the cache (Story 3.10) absorbs
     that.
     """
-    phase, phase2_max_price_eur = await _select_phase(
-        entry=entry,
-        listing=listing,
-        evaluation=evaluation,
-        phase2_preflight=phase2_preflight,
-        log=log,
-    )
+    phase: Phase
+    phase2_max_price_eur: Decimal | None
+    if negotiable:
+        # Over ceiling by definition — the Phase 2 preflight would reject
+        # it; the negotiable surface never carries a Comprar row.
+        phase, phase2_max_price_eur = "negotiable", None
+    else:
+        phase, phase2_max_price_eur = await _select_phase(
+            entry=entry,
+            listing=listing,
+            evaluation=evaluation,
+            phase2_preflight=phase2_preflight,
+            log=log,
+        )
 
     snapshot = AlertSnapshot(
         alert_id=new_alert_id(),
@@ -650,14 +707,65 @@ async def _dispatch_alert(
         assumed_import_charges_eur=import_buffer,
     )
 
-    try:
-        rendered = (
-            render_phase2_listing_alert(
-                snapshot, phase2_max_price_eur, comp_summary=comp_summary, buyer_cost=cost
+    # Offer surface (wallapop-offer-flow): the computed amount + target,
+    # rendered when the entry opted in, an amount exists (only possible when
+    # the target sits below the delivered total — routine on the negotiable
+    # band, and on under-ceiling alerts only with offer.target_total_eur),
+    # and no successful offer was already sent for the listing.
+    offer_eur: Decimal | None = None
+    offer_target: Decimal | None = None
+    if entry.offer.enabled and listing.marketplace == "wallapop" and not listing.is_refurbished:
+        ceiling = _entry_ceiling(entry)
+        if ceiling is not None:
+            target = entry.offer.target_total_eur or ceiling
+            amount = offer_item_price_eur(
+                listing, target_total_eur=target, assumed_shipping_eur=buffer
             )
-            if phase == "phase2" and phase2_max_price_eur is not None
-            else render_phase1_listing_alert(snapshot, comp_summary=comp_summary, buyer_cost=cost)
+            if amount is not None:
+                already = (
+                    await has_offered(listing.marketplace, listing.listing_id)
+                    if has_offered is not None
+                    else False
+                )
+                if not already:
+                    offer_eur, offer_target = amount, target
+
+    if phase == "negotiable" and (offer_eur is None or offer_target is None):
+        # The band filter only tags listings with a computable offer, but the
+        # dedupe can still void it (an offer already went out). An
+        # over-ceiling alert without an offer surface is noise — skip it.
+        log.info(  # type: ignore[attr-defined]
+            "negotiable_alert_skipped_no_offer",
+            extra={"listing_id": listing.listing_id, "entry_display_name": entry.display_name},
         )
+        return False
+
+    try:
+        if phase == "negotiable" and offer_eur is not None and offer_target is not None:
+            rendered = render_negotiable_listing_alert(
+                snapshot,
+                offer_eur=offer_eur,
+                offer_target_total_eur=offer_target,
+                comp_summary=comp_summary,
+                buyer_cost=cost,
+            )
+        elif phase == "phase2" and phase2_max_price_eur is not None:
+            rendered = render_phase2_listing_alert(
+                snapshot,
+                phase2_max_price_eur,
+                comp_summary=comp_summary,
+                buyer_cost=cost,
+                offer_eur=offer_eur,
+                offer_target_total_eur=offer_target,
+            )
+        else:
+            rendered = render_phase1_listing_alert(
+                snapshot,
+                comp_summary=comp_summary,
+                buyer_cost=cost,
+                offer_eur=offer_eur,
+                offer_target_total_eur=offer_target,
+            )
         message_id = await telegram.send(rendered)
     except Exception as exc:
         log.error(  # type: ignore[attr-defined]
