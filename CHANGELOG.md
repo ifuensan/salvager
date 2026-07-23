@@ -12,6 +12,68 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.5.0] — 2026-07-23
+
+**Wallapop "hacer oferta": operator-tapped offers + the negotiable band (#55)**
+
+The first minor since v0.4.0 because it adds a schema migration (0004)
+and a whole new operator surface. Nothing changes until a wishlist
+entry opts in — with no `offer:` block anywhere, rendering, filtering,
+callbacks and the daemon lifecycle are byte-identical to v0.4.4.
+
+- **💰 Ofertar button** on Wallapop alerts, operator-tap only (the FR29
+  no-autonomous-action rule extends to offers, PRD amendment
+  FR58–FR65). A tap drives the offer preflight, a reconciliation
+  re-fetch by internal listing id, an amount recompute under the Phase 2
+  tolerances, and the TinyFish-driven native offer form with EXACTLY
+  the bounded amount — ending in `💰 Oferta enviada` or one of 12
+  closed `OfferFailureReason` variants, each fully rendered with the
+  "No se ha enviado ninguna oferta." reassurance.
+- **Negotiable-band alerts**: Wallapop listings whose delivered total is
+  over the entry ceiling but within `ceiling × (1 + offer.band_pct)`
+  (default +20 %) on offer-enabled entries stop being silently filtered
+  — a new `negotiable` alert phase with the `💰` severity token and an
+  `Ofertar · Saltar · Ver` keyboard (never Comprar). The LLM evaluation
+  and confidence gates are unchanged.
+- **The amount is computed, never picked**: the largest whole-euro item
+  price whose delivered total (item + shipping + Protección) fits the
+  entry's offer target (`offer.target_total_eur`, default = ceiling),
+  bounded by Wallapop's platform floor of 70 % of asking
+  (operator-verified on app + web). Shown on the alert before the tap;
+  drift at tap time aborts fail-closed.
+- **Guardrails mirror the buy path**: one successful offer per listing
+  ever; a self-imposed rolling-24 h budget (`offer.daily_limit`,
+  default 5 — under Wallapop's 10-per-day account cap, whose on-form
+  counter the agent captures into the audit row); an independent
+  lockout + kill switch (`offer_state` — offer failures never block
+  real buys); the append-only `offers` table (migration `0004`,
+  additive); and the keyboard restored on every outcome. v1 ends at
+  "offer sent": acceptance opens Wallapop's 24 h buy window (item NOT
+  reserved meanwhile) — the alert copy says exactly where to follow
+  through.
+- **CLI**: `salvager offer enable <ref> [-t target]` / `disable
+  [--all]` / `status` (budget + lockout at a glance). The Wallapop
+  fetcher now projects `is_refurbished` from the search payload and the
+  offer surface pre-filters on it (refurbished listings don't accept
+  offers).
+- `dev emit-alert` grew 45 → 66 variants (4 offer-eligible listing
+  shapes, `offer_sent`, 12 failures, 4 operational events), all pinned
+  by golden snapshots; the new surfaces join the v1.0 criterion-3 audit
+  scope (see the "Pending delta" in
+  `docs/release-audits/v1.0/SUMMARY.md`).
+- Post-merge review hardening (#55): an audit-write failure AFTER a
+  verified send can no longer masquerade as a send failure (it stays a
+  success and escalates the missing dedupe row as an operational
+  alert), and `offer status` reads the configured `offer.daily_limit`
+  for its budget denominator.
+
+**OpenSpec (#56)** — the `wallapop-offer-flow` capability spec promoted
+to `openspec/specs/` alongside the deltas to `shipping-aware-pricing`
+and `listing-alert-state-updates`; the change archived with the
+operator's app/web captures of the platform's offer rules.
+
+---
+
 ## [0.4.4] — 2026-07-20
 
 No runtime behaviour changes — this release exists so the on-device
