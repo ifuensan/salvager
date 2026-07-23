@@ -39,7 +39,7 @@ from salvager.observability.logging import get_logger
 #: Verbs the dispatcher acts on. Anything else logs at warn level and
 #: is dropped silently — the surface layer (``TelegramBotSurface``)
 #: should have already filtered, this is defence in depth.
-HANDLED_VERBS: Final[frozenset[str]] = frozenset({"view", "skip", "snooze", "buy"})
+HANDLED_VERBS: Final[frozenset[str]] = frozenset({"view", "skip", "snooze", "buy", "offer"})
 
 #: Phase 1 acknowledgment-row labels (UX-DR12). Spanish past-participles
 #: match :data:`BUTTON_LABELS`' present-tense verbs (Ver → visto, Saltar →
@@ -57,6 +57,10 @@ ACK_LABELS: Final[dict[str, str]] = {
 #: a U+2026 character (no MarkdownV2 escape concerns — it's the button
 #: text, not the message body).
 BUY_IN_FLIGHT_LABEL: Final[str] = "🟡 Comprando…"
+
+#: The non-tappable in-flight badge shown while the offer orchestrator
+#: runs (wallapop-offer-flow) — same noop pattern as the buy badge.
+OFFER_IN_FLIGHT_LABEL: Final[str] = "🟡 Ofertando…"
 
 #: Default snooze window. The orchestrator can override via
 #: ``snooze_hours`` to wire ``config.yaml > snooze.default_hours``.
@@ -78,6 +82,12 @@ class BuyExecutor(Protocol):
     async def execute_buy_from_callback(self, event: CallbackEvent) -> object: ...
 
 
+class OfferExecutor(Protocol):
+    """Structural type for "something that can send a Wallapop offer"."""
+
+    async def execute_offer_from_callback(self, event: CallbackEvent) -> object: ...
+
+
 class CallbackDispatcher:
     """Routes Phase 1 + Phase 2 callbacks to audit + state + keyboard edits.
 
@@ -96,6 +106,7 @@ class CallbackDispatcher:
         store: Store,
         surface: TelegramSurface,
         buy_orchestrator: BuyExecutor | None = None,
+        offer_orchestrator: OfferExecutor | None = None,
         snooze_hours: int = DEFAULT_SNOOZE_HOURS,
         clock: Callable[[], datetime] = _utc_now,
         new_audit_id: Callable[[], UUID] = uuid_module.uuid4,
@@ -103,6 +114,7 @@ class CallbackDispatcher:
         self._store = store
         self._surface = surface
         self._buy_orchestrator = buy_orchestrator
+        self._offer_orchestrator = offer_orchestrator
         self._snooze_hours = snooze_hours
         self._clock = clock
         self._new_audit_id = new_audit_id
@@ -152,6 +164,10 @@ class CallbackDispatcher:
             await self._handle_buy(event, alert_id)
             return
 
+        if event.verb == "offer":
+            await self._handle_offer(event, alert_id)
+            return
+
         if event.verb == "snooze":
             await self._apply_snooze(alert_id, now)
 
@@ -195,6 +211,27 @@ class CallbackDispatcher:
             )
             return
         task = asyncio.create_task(self._buy_orchestrator.execute_buy_from_callback(event))
+        self._buy_tasks.add(task)
+        task.add_done_callback(self._buy_tasks.discard)
+
+    async def _handle_offer(self, event: CallbackEvent, alert_id: UUID) -> None:
+        """Offer verb: in-flight badge + fire-and-forget orchestrator —
+        the exact shape of :meth:`_handle_buy` (wallapop-offer-flow)."""
+        self._log.info(
+            "offer_callback_received",
+            extra={"alert_id": str(alert_id), "callback_data": event.callback_data},
+        )
+        await self._surface.edit_keyboard(
+            event.message_id,
+            _offer_in_flight_keyboard(alert_id),
+        )
+        if self._offer_orchestrator is None:
+            self._log.error(
+                "offer_orchestrator_not_wired",
+                extra={"alert_id": str(alert_id)},
+            )
+            return
+        task = asyncio.create_task(self._offer_orchestrator.execute_offer_from_callback(event))
         self._buy_tasks.add(task)
         task.add_done_callback(self._buy_tasks.discard)
 
@@ -258,6 +295,19 @@ def _acknowledgment_keyboard(verb: str, alert_id: UUID) -> list[list[InlineButto
     ]
 
 
+def _offer_in_flight_keyboard(alert_id: UUID) -> list[list[InlineButton]]:
+    """Single-row ``🟡 Ofertando…`` badge shown while the offer
+    orchestrator runs — same noop pattern as the buy badge."""
+    return [
+        [
+            InlineButton(
+                text=OFFER_IN_FLIGHT_LABEL,
+                callback_data=f"listing:noop:{alert_id}",
+            )
+        ]
+    ]
+
+
 def _in_flight_keyboard(alert_id: UUID) -> list[list[InlineButton]]:
     """Build the single-row in-flight keyboard shown while the buy
     orchestrator runs (Story 5.10, UX-DR11).
@@ -283,6 +333,8 @@ __all__ = [
     "BUY_IN_FLIGHT_LABEL",
     "DEFAULT_SNOOZE_HOURS",
     "HANDLED_VERBS",
+    "OFFER_IN_FLIGHT_LABEL",
     "BuyExecutor",
     "CallbackDispatcher",
+    "OfferExecutor",
 ]

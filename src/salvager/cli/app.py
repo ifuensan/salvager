@@ -53,11 +53,13 @@ login_app = typer.Typer(
     help="Authenticate with a marketplace (Wallapop cookie capture, eBay OAuth).",
 )
 phase2_app = typer.Typer(help="Control Phase 2 autonomous-purchase enablement per entry.")
+offer_app = typer.Typer(help="Control Wallapop offer ('hacer oferta') enablement per entry.")
 audit_app = typer.Typer(help="Inspect the local append-only audit log.")
 wishlist_app = typer.Typer(help="Read-only inspection of the loaded wishlist.")
 
 app.add_typer(login_app, name="login")
 app.add_typer(phase2_app, name="phase2")
+app.add_typer(offer_app, name="offer")
 app.add_typer(audit_app, name="audit")
 app.add_typer(wishlist_app, name="wishlist")
 
@@ -855,6 +857,105 @@ def cmd_phase2_status(
         wishlist_path=wishlist_path,
         data_dir=data_dir,
         output_format=output_format,
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+@offer_app.command("enable")
+def cmd_offer_enable(
+    entry: Annotated[str, typer.Argument(help="Entry key from wishlist.")],
+    target: Annotated[
+        str | None,
+        typer.Option(
+            "--target",
+            "-t",
+            help="Aim offers at this delivered total (EUR); omit to target the entry ceiling.",
+        ),
+    ] = None,
+    wishlist_path: Annotated[
+        Path,
+        typer.Option("--wishlist-path", "-w", help="Path to wishlist.yaml."),
+    ] = _DEFAULT_WISHLIST_PATH,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
+    ] = _DEFAULT_DATA_DIR,
+) -> None:
+    """Enable Wallapop offers for an entry (wallapop-offer-flow, FR65)."""
+    from salvager.cli.commands import offer_cmd
+
+    exit_code = offer_cmd.run_enable(
+        query=entry,
+        wishlist_path=wishlist_path,
+        data_dir=data_dir,
+        target_total_eur=target,
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+@offer_app.command("disable")
+def cmd_offer_disable(
+    entry: Annotated[str | None, typer.Argument(help="Entry key, or omit with --all.")] = None,
+    all_entries: Annotated[bool, typer.Option("--all", help="Disable offers globally.")] = False,
+    wishlist_path: Annotated[
+        Path,
+        typer.Option("--wishlist-path", "-w", help="Path to wishlist.yaml."),
+    ] = _DEFAULT_WISHLIST_PATH,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
+    ] = _DEFAULT_DATA_DIR,
+) -> None:
+    """Disable Wallapop offers — per entry or globally (UX-DR23)."""
+    from salvager.cli.commands import offer_cmd
+
+    exit_code = offer_cmd.run_disable(
+        query=entry,
+        all_entries=all_entries,
+        wishlist_path=wishlist_path,
+        data_dir=data_dir,
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+@offer_app.command("status")
+def cmd_offer_status(
+    wishlist_path: Annotated[
+        Path,
+        typer.Option("--wishlist-path", "-w", help="Path to wishlist.yaml."),
+    ] = _DEFAULT_WISHLIST_PATH,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Daemon state dir (default: /app/data)."),
+    ] = _DEFAULT_DATA_DIR,
+    config_path: Annotated[
+        Path,
+        typer.Option("--config-path", "-c", help="Path to config.yaml (for offer.daily_limit)."),
+    ] = _DEFAULT_CONFIG_PATH,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Output format: human | json."),
+    ] = "human",
+) -> None:
+    """Print offer enablement table + lockout/budget state."""
+    from salvager.cli.commands import offer_cmd
+    from salvager.config.config_yaml import load_config
+
+    # Best-effort: the budget denominator should reflect the operator's
+    # configured offer.daily_limit, but a missing/broken config.yaml must
+    # not take a read-only status command down with it.
+    try:
+        daily_limit = load_config(config_path).offer.daily_limit
+    except Exception:
+        daily_limit = 5
+    exit_code = offer_cmd.run_status(
+        wishlist_path=wishlist_path,
+        data_dir=data_dir,
+        output_format=output_format,
+        daily_limit=daily_limit,
     )
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

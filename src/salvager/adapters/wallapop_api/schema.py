@@ -103,6 +103,10 @@ class WallapopApiItem(BaseModel):
     location: WallapopApiLocation | None = None
     images: list[WallapopApiImage] = Field(default_factory=list)
     reserved: WallapopApiReserved | None = None
+    #: Same ``{"flag": bool}`` wrapper as ``reserved`` (live-probed
+    #: 2026-07-22). Refurbished listings don't accept offers, so the
+    #: offer surface pre-filters on it; absent = not refurbished.
+    is_refurbished: WallapopApiReserved | None = None
     web_slug: str | None = None
     #: Unix milliseconds. ``None`` is tolerated for forward-compat,
     #: but the live API always emits it.

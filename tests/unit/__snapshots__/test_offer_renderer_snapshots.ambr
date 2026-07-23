@@ -1,0 +1,322 @@
+# serializer version: 1
+# name: test_offer_variant_keyboard_matches_snapshot[negotiable_listing_direct][negotiable_listing_direct.keyboard]
+  list([
+    list([
+      dict({
+        'callback_data': 'listing:offer:12345678-1234-1234-1234-123456789abc',
+        'text': '💰 Ofertar',
+      }),
+      dict({
+        'callback_data': 'listing:skip:12345678-1234-1234-1234-123456789abc',
+        'text': '❌ Saltar',
+      }),
+      dict({
+        'callback_data': 'listing:view:12345678-1234-1234-1234-123456789abc',
+        'text': '👁 Ver',
+      }),
+    ]),
+  ])
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[negotiable_listing_missing_photo][negotiable_listing_missing_photo.keyboard]
+  list([
+    list([
+      dict({
+        'callback_data': 'listing:offer:12345678-1234-1234-1234-123456789abc',
+        'text': '💰 Ofertar',
+      }),
+      dict({
+        'callback_data': 'listing:skip:12345678-1234-1234-1234-123456789abc',
+        'text': '❌ Saltar',
+      }),
+      dict({
+        'callback_data': 'listing:view:12345678-1234-1234-1234-123456789abc',
+        'text': '👁 Ver',
+      }),
+    ]),
+  ])
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_amount_rejected][offer_failure_amount_rejected.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_daily_limit_reached][offer_failure_daily_limit_reached.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_duplicate_offer][offer_failure_duplicate_offer.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_listing_gone][offer_failure_listing_gone.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_lockout_engaged][offer_failure_lockout_engaged.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_marketplace_error][offer_failure_marketplace_error.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_missing_element][offer_failure_missing_element.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_offer_unavailable][offer_failure_offer_unavailable.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_reconciliation_tripped][offer_failure_reconciliation_tripped.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_screenshot_missing][offer_failure_screenshot_missing.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_timeout][offer_failure_timeout.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_failure_ui_check_failed][offer_failure_ui_check_failed.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[offer_sent][offer_sent.keyboard]
+  None
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[phase1_listing_with_offer][phase1_listing_with_offer.keyboard]
+  list([
+    list([
+      dict({
+        'callback_data': 'listing:view:12345678-1234-1234-1234-123456789abc',
+        'text': '👁 Ver',
+      }),
+      dict({
+        'callback_data': 'listing:skip:12345678-1234-1234-1234-123456789abc',
+        'text': '🙅 Saltar',
+      }),
+      dict({
+        'callback_data': 'listing:snooze:12345678-1234-1234-1234-123456789abc',
+        'text': '😴 Posponer 24h',
+      }),
+    ]),
+    list([
+      dict({
+        'callback_data': 'listing:offer:12345678-1234-1234-1234-123456789abc',
+        'text': '💰 Ofertar',
+      }),
+    ]),
+  ])
+# ---
+# name: test_offer_variant_keyboard_matches_snapshot[phase2_listing_with_offer][phase2_listing_with_offer.keyboard]
+  list([
+    list([
+      dict({
+        'callback_data': 'listing:buy:12345678-1234-1234-1234-123456789abc',
+        'text': '✅ Comprar',
+      }),
+      dict({
+        'callback_data': 'listing:skip:12345678-1234-1234-1234-123456789abc',
+        'text': '❌ Saltar',
+      }),
+      dict({
+        'callback_data': 'listing:view:12345678-1234-1234-1234-123456789abc',
+        'text': '👁 Ver',
+      }),
+    ]),
+    list([
+      dict({
+        'callback_data': 'listing:offer:12345678-1234-1234-1234-123456789abc',
+        'text': '💰 Ofertar',
+      }),
+    ]),
+  ])
+# ---
+# name: test_offer_variant_matches_snapshot[negotiable_listing_direct][negotiable_listing_direct.text]
+  '''
+  💰 *WD Red Plus 4TB \(WD40EFPX\)* — *70,00 €*
+  📍 Madrid · Wallapop
+  💶 70,00 \+ 3,50 envío \(est\.\) \+ 5,94 Protección \= 79,44 €
+  💰 Oferta: 51,00 € \(total ≤ 60,00 €\)
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[negotiable_listing_missing_photo][negotiable_listing_missing_photo.text]
+  '''
+  💰 *WD Red Plus 4TB \(WD40EFPX\)* — *70,00 €*
+  📍 Madrid · Wallapop
+  💶 70,00 \+ 3,50 envío \(est\.\) \+ 5,94 Protección \= 79,44 €
+  💰 Oferta: 51,00 € \(total ≤ 60,00 €\)
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_amount_rejected][offer_failure_amount_rejected.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Wallapop rechazó el importe ofertado
+  \- Importe intentado: 51,00 €
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_daily_limit_reached][offer_failure_daily_limit_reached.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Límite diario de ofertas alcanzado
+  \- Límite: presupuesto propio \(offer\.daily\_limit\)
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. Reintenta cuando la ventana de 24 h libere presupuesto
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_duplicate_offer][offer_failure_duplicate_offer.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Ya existe una oferta enviada para este anuncio
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_listing_gone][offer_failure_listing_gone.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: El anuncio ya no está disponible \(vendido o retirado\)
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_lockout_engaged][offer_failure_lockout_engaged.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Envío de ofertas bloqueado por fallos consecutivos
+  \- 3 fallos consecutivos · umbral: 3
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  2\. `salvager offer enable <entry>`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_marketplace_error][offer_failure_marketplace_error.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Error en el marketplace
+  \- Detalle: TinyFishUnavailable
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_missing_element][offer_failure_missing_element.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Elemento esperado no encontrado
+  \- Elementos faltantes: \['offer\_button'\]
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_offer_unavailable][offer_failure_offer_unavailable.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: El anuncio no admite ofertas
+  \- Vendedor PRO, producto reacondicionado o categoría excluida
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_reconciliation_tripped][offer_failure_reconciliation_tripped.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: El anuncio cambió desde la alerta \(precio/estado\)
+  \- Oferta mostrada: 51,00 €
+  \- Oferta recalculada: 49,00 €
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_screenshot_missing][offer_failure_screenshot_missing.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Captura de confirmación no disponible
+  
+  La oferta puede haberse enviado, pero no se capturó la confirmación\.
+  
+  Próximo paso:
+  1\. Comprueba el chat del anuncio en la app de Wallapop
+  2\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_timeout][offer_failure_timeout.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Timeout durante el envío de la oferta
+  \- Detalle: TinyFishUnavailable
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_failure_ui_check_failed][offer_failure_ui_check_failed.text]
+  '''
+  🚫 *Oferta no enviada* · WD Red Plus 4TB \(WD40EFPX\)
+  Causa: Verificación de UI falló
+  \- Elementos faltantes: \['offer\_button'\]
+  
+  No se ha enviado ninguna oferta\.
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[offer_sent][offer_sent.text]
+  '''
+  💰 *Oferta enviada* · 51,00 €
+  Listing: WD Red Plus 4TB \(WD40EFPX\)
+  El vendedor puede aceptar, rechazar o contraofertar — vigila el chat de Wallapop\.
+  Si acepta: tienes 24 h para comprar al precio aceptado en la app \(el artículo NO queda reservado\)\.
+  Ofertas restantes hoy: 9
+  `salvager audit show --id 7` para el registro completo de eventos\.
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[phase1_listing_with_offer][phase1_listing_with_offer.text]
+  '''
+  📦 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  💶 55,00 \+ 3,50 envío \(est\.\) \+ 4,82 Protección \= 63,32 €
+  💰 Oferta: 42,00 € \(total ≤ 50,00 €\)
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high
+  '''
+# ---
+# name: test_offer_variant_matches_snapshot[phase2_listing_with_offer][phase2_listing_with_offer.text]
+  '''
+  🟢 *WD Red Plus 4TB \(WD40EFPX\)* — *55,00 €*
+  📍 Madrid · Wallapop
+  💶 55,00 \+ 3,50 envío \(est\.\) \+ 4,82 Protección \= 63,32 €
+  💰 Oferta: 42,00 € \(total ≤ 50,00 €\)
+  🔗 [Ver anuncio en Wallapop](https://es.wallapop.com/item/abc123)
+  _WD Red Plus 4TB at 55€ — strong match\._
+  🔍 Confidence: high · Phase 2 max: 60,00 €
+  '''
+# ---

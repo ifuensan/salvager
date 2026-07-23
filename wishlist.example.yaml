@@ -38,6 +38,12 @@
 #   container_keywords: list[str]   Wrapper-listing search terms (NAS, mini-PC)
 #   phase2.enabled:     bool        Default false; toggle via CLI never YAML
 #   phase2.max_price_eur: decimal   Per-entry Phase 2 hard ceiling (FR26)
+#   offer.enabled:      bool        Default false; toggle via CLI never YAML.
+#                                   Enables the Wallapop 💰 Ofertar surface
+#                                   (offer button + negotiable-band alerts).
+#   offer.target_total_eur: decimal Aim offers at a delivered total BELOW the
+#                                   ceiling ("I'd accept 80 € but want to pay
+#                                   70 €"). Unset = target the ceiling.
 
 entries:
 

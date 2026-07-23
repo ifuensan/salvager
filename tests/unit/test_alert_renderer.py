@@ -32,7 +32,9 @@ FIXED_EVALUATED_AT = datetime(2026, 5, 12, 12, 0, 0, tzinfo=UTC)
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def test_severity_tokens_have_locked_six_entries() -> None:
+def test_severity_tokens_have_locked_nine_entries() -> None:
+    # Grown by the wallapop-offer-flow PRD amendment (FR58-FR65): the three
+    # offer surfaces join the original six.
     assert set(SEVERITY_TOKENS.keys()) == {
         "operational_warn",
         "operational_info",
@@ -40,22 +42,28 @@ def test_severity_tokens_have_locked_six_entries() -> None:
         "phase2_listing",
         "phase2_buy_success",
         "phase2_buy_failure",
+        "negotiable_listing",
+        "offer_sent",
+        "offer_failure",
     }
     assert SEVERITY_TOKENS["phase1_listing"] == "📦"
     assert SEVERITY_TOKENS["operational_warn"] == "⚠️ "
+    assert SEVERITY_TOKENS["negotiable_listing"] == "💰"
 
 
-def test_button_labels_have_locked_five_entries() -> None:
+def test_button_labels_have_locked_six_entries() -> None:
     assert set(BUTTON_LABELS.keys()) == {
         "view",
         "skip_phase1",
         "snooze",
         "buy",
         "skip_phase2",
+        "offer",
     }
     assert BUTTON_LABELS["view"] == "👁 Ver"
     assert BUTTON_LABELS["skip_phase1"] == "🙅 Saltar"
     assert BUTTON_LABELS["snooze"] == "😴 Posponer 24h"
+    assert BUTTON_LABELS["offer"] == "💰 Ofertar"
 
 
 def test_callback_data_format_is_literal_template() -> None:

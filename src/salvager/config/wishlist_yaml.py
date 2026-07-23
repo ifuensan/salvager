@@ -298,9 +298,16 @@ def _sync_model_into_yaml(model: BaseModel, yaml_node: Any) -> None:
     """Walk a pydantic model and update the parallel ruamel node only for
     fields whose typed value diverges. Untouched cells keep their
     original quoting, comments, and ordering."""
-    for field_name in model.__class__.model_fields:
+    for field_name, field_info in model.__class__.model_fields.items():
         typed_value = getattr(model, field_name)
         if field_name not in yaml_node:
+            # An absent cell whose typed value still equals the model default
+            # stays absent — otherwise adding an optional field to the schema
+            # (e.g. `offer:`) would inject noise into every saved wishlist
+            # and break the byte-identical round-trip guarantee.
+            default = field_info.get_default(call_default_factory=True)
+            if _values_equal(typed_value, default):
+                continue
             yaml_node[field_name] = _to_yaml(typed_value)
             continue
         yaml_value = yaml_node[field_name]

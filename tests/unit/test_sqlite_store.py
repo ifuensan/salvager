@@ -137,8 +137,8 @@ def test_migration_runner_applies_pending_migrations(tmp_path: Path) -> None:
     connection = open_connection(tmp_path / "salvager.db")
     try:
         version = MigrationRunner().run(connection)
-        assert version == 3
-        assert MigrationRunner().current_version(connection) == 3
+        assert version == 4
+        assert MigrationRunner().current_version(connection) == 4
     finally:
         connection.close()
 
@@ -211,7 +211,7 @@ def test_migration_runner_persists_schema_version(migrated_db: Path) -> None:
     connection = open_connection(migrated_db)
     try:
         row = connection.execute("SELECT value FROM _meta WHERE key='schema_version'").fetchone()
-        assert int(row[0]) == 3
+        assert int(row[0]) == 4
     finally:
         connection.close()
 

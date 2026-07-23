@@ -27,13 +27,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from salvager.domain.comps import CompSummary
-from salvager.domain.errors import BuyFailureReason
+from salvager.domain.errors import BuyFailureReason, OfferFailureReason
 from salvager.domain.evaluation import ListingEvaluation
 from salvager.domain.listing import Listing
 from salvager.domain.phase2_audit import TransactionRecord
 from salvager.domain.pricing import BuyerCost
 
-Phase = Literal["phase1", "phase2"]
+Phase = Literal["phase1", "phase2", "negotiable"]
 ParseMode = Literal["MarkdownV2"]
 
 # Telegram caps inline-button callback_data at 64 bytes. The locked format
@@ -61,6 +61,10 @@ SEVERITY_TOKENS: Final[dict[str, str]] = {
     "phase2_listing": "🟢",
     "phase2_buy_success": "✅",
     "phase2_buy_failure": "🚫",
+    # Wallapop offer surfaces (wallapop-offer-flow; PRD amendment FR58-FR65).
+    "negotiable_listing": "💰",
+    "offer_sent": "💰",
+    "offer_failure": "🚫",
 }
 
 #: Inline-keyboard button labels (Spanish per UX-DR27). PRD amendment to grow.
@@ -70,6 +74,7 @@ BUTTON_LABELS: Final[dict[str, str]] = {
     "snooze": "😴 Posponer 24h",
     "buy": "✅ Comprar",
     "skip_phase2": "❌ Saltar",
+    "offer": "💰 Ofertar",
 }
 
 #: Locked callback_data format. Max 64 bytes per Telegram.
@@ -126,7 +131,7 @@ class RenderedAlert(BaseModel):
     inline_keyboard: list[list[InlineButton]] | None = None
 
 
-CallbackVerb = Literal["view", "skip", "snooze", "buy"]
+CallbackVerb = Literal["view", "skip", "snooze", "buy", "offer"]
 
 
 class CallbackEvent(BaseModel):
@@ -309,6 +314,8 @@ def render_phase1_listing_alert(
     *,
     comp_summary: CompSummary | None = None,
     buyer_cost: BuyerCost | None = None,
+    offer_eur: Decimal | None = None,
+    offer_target_total_eur: Decimal | None = None,
 ) -> RenderedAlert:
     """Render a Phase 1 listing alert (Direction A + Direction E hybrid).
 
@@ -351,6 +358,8 @@ def render_phase1_listing_alert(
     ]
     if buyer_cost is not None:
         rows.append(_cost_line(buyer_cost))
+    if offer_eur is not None and offer_target_total_eur is not None:
+        rows.append(_offer_line(offer_eur, offer_target_total_eur))
     rows.append(_deeplink_row(listing))
 
     if evaluation.is_container:
@@ -366,11 +375,15 @@ def render_phase1_listing_alert(
 
     photo_url = listing.photo_urls[0] if listing.photo_urls else None
 
+    keyboard = [_phase1_button_row(str(snapshot.alert_id))]
+    if offer_eur is not None and offer_target_total_eur is not None:
+        keyboard.append(offer_button_row(str(snapshot.alert_id)))
+
     return RenderedAlert(
         text="\n".join(rows),
         parse_mode="MarkdownV2",
         photo_url=photo_url,
-        inline_keyboard=[_phase1_button_row(str(snapshot.alert_id))],
+        inline_keyboard=keyboard,
     )
 
 
@@ -394,6 +407,8 @@ def render_phase2_listing_alert(
     *,
     comp_summary: CompSummary | None = None,
     buyer_cost: BuyerCost | None = None,
+    offer_eur: Decimal | None = None,
+    offer_target_total_eur: Decimal | None = None,
 ) -> RenderedAlert:
     """Render a Phase 2 listing alert (Story 5.2 / FR23 / FR24 / UX-DR7).
 
@@ -433,6 +448,8 @@ def render_phase2_listing_alert(
     ]
     if buyer_cost is not None:
         rows.append(_cost_line(buyer_cost))
+    if offer_eur is not None and offer_target_total_eur is not None:
+        rows.append(_offer_line(offer_eur, offer_target_total_eur))
     rows.append(_deeplink_row(listing))
 
     if evaluation.is_container:
@@ -448,11 +465,125 @@ def render_phase2_listing_alert(
 
     photo_url = listing.photo_urls[0] if listing.photo_urls else None
 
+    keyboard = [_phase2_button_row(str(snapshot.alert_id))]
+    if offer_eur is not None and offer_target_total_eur is not None:
+        keyboard.append(offer_button_row(str(snapshot.alert_id)))
+
     return RenderedAlert(
         text="\n".join(rows),
         parse_mode="MarkdownV2",
         photo_url=photo_url,
-        inline_keyboard=[_phase2_button_row(str(snapshot.alert_id))],
+        inline_keyboard=keyboard,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Wallapop offer surfaces — wallapop-offer-flow
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _offer_line(offer_eur: Decimal, target_total_eur: Decimal) -> str:
+    """Render the computed-offer row on offer-eligible alerts.
+
+    ``💰 Oferta: <offer> € (total ≤ <target> €)`` — the exact amount the
+    Ofertar tap will send, shown BEFORE the operator taps (the orchestrator
+    recomputes it from the reconciled listing and aborts on drift). Plain
+    prose → one escape pass.
+    """
+    offer = _format_price_es(offer_eur)
+    target = _format_price_es(target_total_eur)
+    return escape_markdown_v2(f"💰 Oferta: {offer} (total ≤ {target})")
+
+
+def offer_button_row(alert_id: str) -> list[InlineButton]:
+    """The standalone ``💰 Ofertar`` row appended to offer-eligible Phase 1/
+    Phase 2 alerts — its own row so the locked Phase 1/Phase 2 button rows
+    stay byte-identical (FR22)."""
+    return [
+        InlineButton(text=BUTTON_LABELS["offer"], callback_data=f"listing:offer:{alert_id}"),
+    ]
+
+
+def negotiable_button_row(alert_id: str) -> list[InlineButton]:
+    """The negotiable-alert button row: Ofertar · Saltar · Ver.
+
+    Mirrors the Phase 2 layout (affirmative action in the dominant left
+    slot) with Ofertar in place of Comprar — a negotiable listing is over
+    ceiling by definition, so it can never carry a buy button.
+    """
+    return [
+        InlineButton(text=BUTTON_LABELS["offer"], callback_data=f"listing:offer:{alert_id}"),
+        InlineButton(text=BUTTON_LABELS["skip_phase2"], callback_data=f"listing:skip:{alert_id}"),
+        InlineButton(text=BUTTON_LABELS["view"], callback_data=f"listing:view:{alert_id}"),
+    ]
+
+
+def offer_sent_badge_row(alert_id: str) -> list[InlineButton]:
+    """Terminal non-tappable ``💰 Oferta enviada`` badge after a successful
+    send — the Ofertar row never returns for that listing (per-listing
+    dedupe). ``noop`` pattern as the other badges."""
+    return [
+        InlineButton(text="💰 Oferta enviada", callback_data=f"listing:noop:{alert_id}"),
+        InlineButton(text=BUTTON_LABELS["view"], callback_data=f"listing:view:{alert_id}"),
+    ]
+
+
+def render_negotiable_listing_alert(
+    snapshot: AlertSnapshot,
+    *,
+    offer_eur: Decimal,
+    offer_target_total_eur: Decimal,
+    comp_summary: CompSummary | None = None,
+    buyer_cost: BuyerCost | None = None,
+) -> RenderedAlert:
+    """Render a negotiable-band listing alert (wallapop-offer-flow).
+
+    Same anatomy as :func:`render_phase1_listing_alert` with three locked
+    substitutions:
+
+      - Severity prefix ``📦`` → ``💰`` (over ceiling, offerable into it).
+      - An offer row after the buyer-total breakdown carrying the computed
+        amount and the target it fits.
+      - Inline keyboard ``[Ofertar · Saltar · Ver]`` — never Comprar.
+    """
+    listing = snapshot.listing
+    evaluation = snapshot.evaluation
+
+    severity = SEVERITY_TOKENS["negotiable_listing"]
+    name = escape_markdown_v2(snapshot.entry_display_name)
+    price = escape_markdown_v2(_format_price_es(listing.price_eur))
+    location = escape_markdown_v2(listing.location or "—")
+    marketplace = escape_markdown_v2(listing.marketplace.capitalize())
+    take = escape_markdown_v2(evaluation.one_line_take)
+    confidence = escape_markdown_v2(evaluation.confidence)
+
+    rows: list[str] = [
+        f"{severity} *{name}* — *{price}*",
+        f"📍 {location} · {marketplace}",
+    ]
+    if buyer_cost is not None:
+        rows.append(_cost_line(buyer_cost))
+    rows.append(_offer_line(offer_eur, offer_target_total_eur))
+    rows.append(_deeplink_row(listing))
+
+    if evaluation.is_container:
+        wrapper = escape_markdown_v2(evaluation.wrapper_text or "—")
+        extracted = escape_markdown_v2(evaluation.extracted_text or "—")
+        rows.append(f"  ↪︎ Wrapper: {wrapper}")
+        rows.append(f"  ↪︎ Extracted: {extracted}")
+
+    rows.append(f"_{take}_")
+    rows.append(f"🔍 Confidence: {confidence}")
+    if comp_summary is not None:
+        rows.append(_comp_line(comp_summary))
+
+    photo_url = listing.photo_urls[0] if listing.photo_urls else None
+
+    return RenderedAlert(
+        text="\n".join(rows),
+        parse_mode="MarkdownV2",
+        photo_url=photo_url,
+        inline_keyboard=[negotiable_button_row(str(snapshot.alert_id))],
     )
 
 
@@ -754,6 +885,188 @@ def _price_or_dash(value: object) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Offer outcome renderers — wallapop-offer-flow
+# ─────────────────────────────────────────────────────────────────────────
+
+#: Mandatory reassurance line on every offer-failure variant: the operator
+#: must answer "did an offer go out?" from the alert alone.
+OFFER_REASSURANCE_LINE: Final[str] = "No se ha enviado ninguna oferta."
+
+#: Special-case reassurance for ``screenshot_missing`` — the send may have
+#: actually happened, just without captured evidence.
+OFFER_SCREENSHOT_MISSING_REASSURANCE: Final[str] = (
+    "La oferta puede haberse enviado, pero no se capturó la confirmación."
+)
+
+_CMD_OFFER_ENABLE: Final[str] = "salvager offer enable <entry>"
+
+#: Per-variant short cause label shown on row 2 of the offer-failure alert.
+_OFFER_FAILURE_CAUSE_LABELS: Final[dict[str, str]] = {
+    "listing_gone": "El anuncio ya no está disponible (vendido o retirado)",
+    "reconciliation_tripped": "El anuncio cambió desde la alerta (precio/estado)",
+    "offer_unavailable": "El anuncio no admite ofertas",
+    "amount_rejected": "Wallapop rechazó el importe ofertado",
+    "daily_limit_reached": "Límite diario de ofertas alcanzado",
+    "duplicate_offer": "Ya existe una oferta enviada para este anuncio",
+    "lockout_engaged": "Envío de ofertas bloqueado por fallos consecutivos",
+    "missing_element": "Elemento esperado no encontrado",
+    "marketplace_error": "Error en el marketplace",
+    "timeout": "Timeout durante el envío de la oferta",
+    "screenshot_missing": "Captura de confirmación no disponible",
+    "ui_check_failed": "Verificación de UI falló",
+}
+
+
+def render_offer_sent(
+    *,
+    entry_display_name: str,
+    offered_eur: Decimal,
+    audit_id: int,
+    screenshot_path: str | None = None,
+    platform_remaining: int | None = None,
+) -> RenderedAlert:
+    """Render the offer-sent confirmation (wallapop-offer-flow).
+
+    v1 ends here: the negotiation continues in the Wallapop app. The body
+    states exactly what an acceptance means — a 24 h window to buy at the
+    accepted price, with the item NOT reserved meanwhile — so the operator
+    knows to watch the chat. ``platform_remaining`` is Wallapop's "ofertas
+    restantes" counter when the agent captured it.
+    """
+    severity = SEVERITY_TOKENS["offer_sent"]
+    price = escape_markdown_v2(_format_price_es(offered_eur))
+    entry = escape_markdown_v2(entry_display_name)
+
+    rows = [
+        f"{severity} *Oferta enviada* · {price}",
+        f"Listing: {entry}",
+        _prose("El vendedor puede aceptar, rechazar o contraofertar — vigila el chat de Wallapop."),
+        _prose(
+            "Si acepta: tienes 24 h para comprar al precio aceptado en la app "
+            "(el artículo NO queda reservado)."
+        ),
+    ]
+    if platform_remaining is not None:
+        rows.append(_prose(f"Ofertas restantes hoy: {platform_remaining}"))
+    rows.append(
+        _cmd(f"salvager audit show --id {audit_id}")
+        + _prose(" para el registro completo de eventos.")
+    )
+
+    return RenderedAlert(
+        text="\n".join(rows),
+        parse_mode="MarkdownV2",
+        photo_url=screenshot_path,
+        inline_keyboard=None,
+    )
+
+
+def render_offer_failure(
+    reason: OfferFailureReason,
+    *,
+    entry_display_name: str,
+    ctx: Mapping[str, Any] | None = None,
+) -> RenderedAlert:
+    """Render an offer-failure alert (wallapop-offer-flow).
+
+    Mirrors :func:`render_phase2_buy_failure`: the reassurance line —
+    :data:`OFFER_REASSURANCE_LINE` (or the ``screenshot_missing`` ambiguity
+    special case) — is non-optional. A variant without a cause label fails
+    loud (KeyError) rather than rendering a hole.
+    """
+    ctx_map = dict(ctx) if ctx is not None else {}
+    severity = SEVERITY_TOKENS["offer_failure"]
+    entry = escape_markdown_v2(entry_display_name)
+    cause = escape_markdown_v2(_OFFER_FAILURE_CAUSE_LABELS[reason.value])
+
+    rows: list[str] = [
+        f"{severity} *Oferta no enviada* · {entry}",
+        _prose("Causa: ") + cause,
+    ]
+    rows.extend(_offer_failure_detail_rows(reason, ctx_map))
+    rows.append("")
+    if reason.value == "screenshot_missing":
+        rows.append(_prose(OFFER_SCREENSHOT_MISSING_REASSURANCE))
+    else:
+        rows.append(_prose(OFFER_REASSURANCE_LINE))
+    rows.extend(_offer_failure_next_steps(reason, ctx_map))
+
+    return RenderedAlert(
+        text="\n".join(rows),
+        parse_mode="MarkdownV2",
+        photo_url=None,
+        inline_keyboard=None,
+    )
+
+
+def _offer_failure_detail_rows(reason: OfferFailureReason, ctx: Mapping[str, Any]) -> list[str]:
+    """Variant-specific bullet rows that explain the offer failure."""
+    name = reason.value
+    if name == "reconciliation_tripped":
+        displayed = _price_or_dash(ctx.get("displayed_offer"))
+        recomputed = ctx.get("recomputed_offer")
+        recomputed_row = (
+            _prose("- Oferta recalculada: ") + _price_or_dash(recomputed)
+            if recomputed is not None
+            else _prose("- Oferta recalculada: ya no es posible (precio/estado nuevo)")
+        )
+        return [_prose("- Oferta mostrada: ") + displayed, recomputed_row]
+    if name == "amount_rejected":
+        return [_prose("- Importe intentado: ") + _price_or_dash(ctx.get("offered"))]
+    if name == "daily_limit_reached":
+        source = ctx.get("limit_source", "propio")
+        label = (
+            "presupuesto propio (offer.daily_limit)"
+            if source == "propio"
+            else "límite de Wallapop (10/día)"
+        )
+        return [_prose(f"- Límite: {label}")]
+    if name == "lockout_engaged":
+        failures = ctx.get("consecutive_failures", "—")
+        threshold = ctx.get("threshold", "—")
+        return [_prose(f"- {failures} fallos consecutivos · umbral: {threshold}")]
+    if name == "offer_unavailable":
+        return [_prose("- Vendedor PRO, producto reacondicionado o categoría excluida")]
+    if name in {"ui_check_failed", "missing_element"}:
+        missing = ctx.get("missing", "—")
+        return [_prose(f"- Elementos faltantes: {missing}")]
+    if name in {"marketplace_error", "timeout"}:
+        detail = ctx.get("error_class") or ctx.get("detail") or "—"
+        return [_prose(f"- Detalle: {detail}")]
+    return []
+
+
+def _offer_failure_next_steps(reason: OfferFailureReason, _ctx: Mapping[str, Any]) -> list[str]:
+    """Variant-specific numbered next-step hints."""
+    name = reason.value
+    if name == "lockout_engaged":
+        return [
+            "",
+            _prose(_NEXT_STEP_HEADER),
+            _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+            _prose("2. ") + _cmd(_CMD_OFFER_ENABLE),
+        ]
+    if name == "daily_limit_reached":
+        return [
+            "",
+            _prose(_NEXT_STEP_HEADER),
+            _prose("1. Reintenta cuando la ventana de 24 h libere presupuesto"),
+        ]
+    if name == "screenshot_missing":
+        return [
+            "",
+            _prose(_NEXT_STEP_HEADER),
+            _prose("1. Comprueba el chat del anuncio en la app de Wallapop"),
+            _prose("2. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+        ]
+    return [
+        "",
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+    ]
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Operational alert renderer — Story 4.1 (FR21 / UX-DR13 / UX-DR14 / UX-DR15)
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -796,6 +1109,12 @@ class EventName(enum.Enum):
     phase2_screenshot_missing = "phase2_screenshot_missing"
     phase2_buy_completion_slow = "phase2_buy_completion_slow"
     buy_orchestrator_error = "buy_orchestrator_error"
+    # Wallapop offer-flow operational variants (wallapop-offer-flow). The
+    # set stays closed: any new variant is a PRD amendment.
+    offer_lockout_engaged = "offer_lockout_engaged"
+    offer_disabled = "offer_disabled"
+    offer_re_enabled = "offer_re_enabled"
+    offer_orchestrator_error = "offer_orchestrator_error"
 
 
 def _prose(text: str) -> str:
@@ -1031,6 +1350,51 @@ def _body_poll_cycle_error(ctx: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _body_offer_lockout_engaged(ctx: Mapping[str, Any]) -> list[str]:
+    failures = ctx.get("consecutive_failures", "—")
+    threshold = ctx.get("threshold", "—")
+    last_entry = str(ctx.get("last_affected_entry", "—"))
+    return [
+        _prose(f"Causa: {failures} fallos consecutivos (umbral: {threshold})"),
+        _prose(f"Última entrada afectada: {last_entry}"),
+        _prose("Estado actual: envío de ofertas desactivado globalmente"),
+        "",
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+        _prose("2. revisa la causa y parchea si es un bug"),
+        _prose("3. ") + _cmd(_CMD_OFFER_ENABLE),
+    ]
+
+
+def _body_offer_disabled(ctx: Mapping[str, Any]) -> list[str]:
+    reason = str(ctx.get("reason", "—"))
+    return [
+        _prose(f"Causa: {reason}"),
+        _prose("Estado actual: envío de ofertas desactivado globalmente"),
+        "",
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_OFFER_ENABLE),
+    ]
+
+
+def _body_offer_re_enabled(ctx: Mapping[str, Any]) -> list[str]:
+    entry = str(ctx.get("entry", "—"))
+    return [_prose(f"Entrada: {entry}")]
+
+
+def _body_offer_orchestrator_error(ctx: Mapping[str, Any]) -> list[str]:
+    error_class = str(ctx.get("error_class", "—"))
+    alert_id = str(ctx.get("alert_id", "—"))
+    return [
+        _prose(f"Causa: {error_class}"),
+        _prose(f"Alert: {alert_id}"),
+        _prose("Estado: ninguna oferta enviada; el teclado se ha restaurado"),
+        "",
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ") + _cmd(_CMD_AUDIT_SHOW_LAST5),
+    ]
+
+
 @dataclass(frozen=True)
 class _OperationalEventSpec:
     """Per-event rendering contract: canonical severity + headline + body builder."""
@@ -1117,6 +1481,20 @@ _OPERATIONAL_EVENT_SPECS: Final[dict[EventName, _OperationalEventSpec]] = {
         "warn",
         "Error en el orquestador de compra",
         _body_buy_orchestrator_error,
+    ),
+    EventName.offer_lockout_engaged: _OperationalEventSpec(
+        "warn", "Envío de ofertas desactivado", _body_offer_lockout_engaged
+    ),
+    EventName.offer_disabled: _OperationalEventSpec(
+        "warn", "Envío de ofertas desactivado", _body_offer_disabled
+    ),
+    EventName.offer_re_enabled: _OperationalEventSpec(
+        "info", "Envío de ofertas reactivado", _body_offer_re_enabled
+    ),
+    EventName.offer_orchestrator_error: _OperationalEventSpec(
+        "warn",
+        "Error en el orquestador de ofertas",
+        _body_offer_orchestrator_error,
     ),
 }
 

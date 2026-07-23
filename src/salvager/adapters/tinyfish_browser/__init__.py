@@ -14,6 +14,7 @@ without the explicit ``# verified by payment_rail_lint`` escape marker.
 """
 
 from salvager.adapters.tinyfish_browser.ebay_checkout import EbayCheckoutFlow
+from salvager.adapters.tinyfish_browser.wallapop_offer import WallapopOfferFlow
 from salvager.adapters.tinyfish_browser.wallapop_pay import WallapopPayFlow
 
-__all__ = ["EbayCheckoutFlow", "WallapopPayFlow"]
+__all__ = ["EbayCheckoutFlow", "WallapopOfferFlow", "WallapopPayFlow"]

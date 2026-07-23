@@ -2,11 +2,13 @@
 
 Three layers:
 
-  - **catalog completeness** — the registry contains exactly 45
+  - **catalog completeness** — the registry contains exactly 66
     variants (3+3 listing, 3 cost, 3 edited, 1 price-drop ping,
-    1 receipt, 9 buy failures, 22 operational) and the set drifts only
-    when a PRD amendment adds an EventName / BuyFailureReason variant
-    or a release-audit delta adds a rendering shape;
+    2 negotiable, 2 with-offer, 1 receipt, 1 offer-sent, 9 buy
+    failures, 12 offer failures, 26 operational) and the set drifts
+    only when a PRD amendment adds an EventName / BuyFailureReason /
+    OfferFailureReason variant or a release-audit delta adds a
+    rendering shape;
   - **renderability** — every registered builder produces a non-empty
     MarkdownV2 ``RenderedAlert.text`` without raising;
   - **CLI seams** — ``--dry-run`` prints the rendered text to stdout
@@ -15,6 +17,8 @@ Three layers:
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -25,7 +29,7 @@ from salvager.cli.dev_alert_fixtures import (
     build_rendered_variant,
 )
 from salvager.domain.alert import EventName
-from salvager.domain.errors import BuyFailureReason
+from salvager.domain.errors import BuyFailureReason, OfferFailureReason
 
 _RUNNER = CliRunner()
 
@@ -35,7 +39,7 @@ _RUNNER = CliRunner()
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def test_registry_is_a_closed_set_of_45_variants() -> None:
+def test_registry_is_a_closed_set_of_66_variants() -> None:
     expected_listing = {
         "phase1_listing_direct",
         "phase1_listing_container",
@@ -50,17 +54,28 @@ def test_registry_is_a_closed_set_of_45_variants() -> None:
         "phase1_listing_edited_price_drop",
         "phase2_listing_edited_reserved",
         "price_drop_ping",
+        "negotiable_listing_direct",
+        "negotiable_listing_missing_photo",
+        "phase1_listing_with_offer",
+        "phase2_listing_with_offer",
     }
     expected_buy = {"buy_success"} | {f"buy_failure_{r.value}" for r in BuyFailureReason}
+    expected_offer = {"offer_sent"} | {f"offer_failure_{r.value}" for r in OfferFailureReason}
     expected_operational = {e.value for e in EventName}
-    expected = expected_listing | expected_buy | expected_operational
+    expected = expected_listing | expected_buy | expected_offer | expected_operational
     assert set(VARIANT_REGISTRY) == expected
-    assert len(VARIANT_REGISTRY) == 45
+    # 17 listing shapes + 10 buy + 13 offer + 26 operational (= len(EventName)).
+    assert len(VARIANT_REGISTRY) == 66
 
 
 def test_registry_covers_every_buy_failure_reason() -> None:
     for reason in BuyFailureReason:
         assert f"buy_failure_{reason.value}" in VARIANT_REGISTRY
+
+
+def test_registry_covers_every_offer_failure_reason() -> None:
+    for reason in OfferFailureReason:
+        assert f"offer_failure_{reason.value}" in VARIANT_REGISTRY
 
 
 def test_registry_covers_every_event_name() -> None:
@@ -102,7 +117,8 @@ def test_list_variants_prints_every_variant_name() -> None:
     assert result.exit_code == 0
     for name in VARIANT_REGISTRY:
         assert name in result.output
-    assert "45 variants total" in result.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "66 variants total" in plain
 
 
 def test_emit_alert_dry_run_prints_rendered_text_without_sending() -> None:

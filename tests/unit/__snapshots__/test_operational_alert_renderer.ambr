@@ -77,6 +77,50 @@
   Estado: la caché y el reintento absorben el límite
   '''
 # ---
+# name: test_operational_alert_matches_snapshot[offer_disabled]
+  '''
+  ⚠️ *Envío de ofertas desactivado*
+  
+  Causa: kill\_switch\_global
+  Estado actual: envío de ofertas desactivado globalmente
+  
+  Próximo paso:
+  1\. `salvager offer enable <entry>`
+  '''
+# ---
+# name: test_operational_alert_matches_snapshot[offer_lockout_engaged]
+  '''
+  ⚠️ *Envío de ofertas desactivado*
+  
+  Causa: 3 fallos consecutivos \(umbral: 3\)
+  Última entrada afectada: Corsair Vengeance LPX 16GB / CMK16GX4M2D3000C16
+  Estado actual: envío de ofertas desactivado globalmente
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  2\. revisa la causa y parchea si es un bug
+  3\. `salvager offer enable <entry>`
+  '''
+# ---
+# name: test_operational_alert_matches_snapshot[offer_orchestrator_error]
+  '''
+  ⚠️ *Error en el orquestador de ofertas*
+  
+  Causa: TinyFishSessionLost
+  Alert: 12345678\-1234\-1234\-1234\-123456789abc
+  Estado: ninguna oferta enviada; el teclado se ha restaurado
+  
+  Próximo paso:
+  1\. `salvager audit show --last 5`
+  '''
+# ---
+# name: test_operational_alert_matches_snapshot[offer_re_enabled]
+  '''
+  ℹ️ Envío de ofertas reactivado
+  
+  Entrada: Corsair Vengeance LPX 16GB / CMK16GX4M2D3000C16
+  '''
+# ---
 # name: test_operational_alert_matches_snapshot[phase2_buy_callback_received]
   '''
   ℹ️ Buy callback recibido

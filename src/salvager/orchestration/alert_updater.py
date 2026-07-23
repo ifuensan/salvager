@@ -23,6 +23,7 @@ succeeded, so a failure re-fires the same diff next cycle (Decision 10).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -34,7 +35,11 @@ from salvager.domain.alert import (
     _phase1_button_row,
     _phase2_button_row,
     apply_update_banner,
+    negotiable_button_row,
+    offer_button_row,
+    offer_sent_badge_row,
     phase2_dead_reserved_row,
+    render_negotiable_listing_alert,
     render_phase1_listing_alert,
     render_phase2_listing_alert,
     render_price_drop_ping,
@@ -43,7 +48,7 @@ from salvager.domain.alert import (
 from salvager.domain.alert_watch import AlertUpdate, AlertWatch, ChangeKind
 from salvager.domain.errors import TelegramMessageGone
 from salvager.domain.listing import Listing
-from salvager.domain.pricing import buyer_cost
+from salvager.domain.pricing import buyer_cost, buyer_total_eur, offer_item_price_eur
 from salvager.domain.wishlist import WishlistEntry
 from salvager.interfaces.store import Store
 from salvager.interfaces.telegram_surface import TelegramSurface
@@ -110,23 +115,42 @@ def reconstruct_keyboard(
     last_verb: str | None,
     *,
     now_reserved: bool,
+    offer_sent: bool = False,
+    offer_eligible: bool = False,
 ) -> list[list[InlineButton]] | None:
     """The keyboard the edited message currently deserves.
 
     Telegram drops the keyboard on any body edit that omits
     ``reply_markup``, and the current keyboard may no longer be the one
     sent (the callback dispatcher repaints ack rows). The caller has
-    already excluded the in-flight ``buy`` verb (never repaint under a
-    running buy).
+    already excluded the in-flight ``buy``/``offer`` verbs (never
+    repaint under a running buy or offer).
+
+    Offer state (wallapop-offer-flow): a recorded successful send keeps
+    the terminal ``💰 Oferta enviada`` badge across every edit;
+    ``offer_eligible`` re-derives the Ofertar row from the listing's
+    CURRENT values (a reserved listing never shows it — like Comprar).
     """
     alert_id = str(snapshot.alert_id)
     if last_verb in _ACKED_VERBS:
         return _acknowledgment_keyboard(last_verb, snapshot.alert_id)
-    if snapshot.phase == "phase2":
+    if snapshot.phase == "negotiable":
+        if offer_sent:
+            return [offer_sent_badge_row(alert_id)]
         if now_reserved:
             return [phase2_dead_reserved_row(alert_id)]
-        return [_phase2_button_row(alert_id)]
-    return [_phase1_button_row(alert_id)]
+        return [negotiable_button_row(alert_id)]
+    if snapshot.phase == "phase2":
+        rows = (
+            [phase2_dead_reserved_row(alert_id)] if now_reserved else [_phase2_button_row(alert_id)]
+        )
+    else:
+        rows = [_phase1_button_row(alert_id)]
+    if offer_sent:
+        rows.append(offer_sent_badge_row(alert_id))
+    elif offer_eligible and not now_reserved:
+        rows.append(offer_button_row(alert_id))
+    return rows
 
 
 async def process_entry_watches(
@@ -141,6 +165,7 @@ async def process_entry_watches(
     assumed_import_charges_eur: Decimal,
     now: datetime,
     log: object,
+    has_offered: Callable[[str, str], Awaitable[bool]] | None = None,
 ) -> None:
     """Diff the entry's active watches against this cycle's fetch and edit
     changed alerts. Never raises — edits are strictly best-effort."""
@@ -163,6 +188,7 @@ async def process_entry_watches(
             await _process_one_watch(
                 watch,
                 listing,
+                entry=entry,
                 store=store,
                 telegram=telegram,
                 policy=policy,
@@ -170,6 +196,7 @@ async def process_entry_watches(
                 assumed_import_charges_eur=assumed_import_charges_eur,
                 now=now,
                 log=log,
+                has_offered=has_offered,
             )
         except Exception as exc:
             log.exception(  # type: ignore[attr-defined]
@@ -186,6 +213,7 @@ async def _process_one_watch(
     watch: AlertWatch,
     listing: Listing,
     *,
+    entry: WishlistEntry,
     store: Store,
     telegram: TelegramSurface,
     policy: AlertUpdatePolicy,
@@ -193,6 +221,7 @@ async def _process_one_watch(
     assumed_import_charges_eur: Decimal,
     now: datetime,
     log: object,
+    has_offered: Callable[[str, str], Awaitable[bool]] | None = None,
 ) -> None:
     diff = detect_change(watch, listing, policy)
     if diff.change is None:
@@ -206,16 +235,20 @@ async def _process_one_watch(
 
     last_callback = await store.get_last_callback_verb(watch.alert_id)
     last_verb = last_callback[0] if last_callback is not None else None
-    if last_verb == "buy":
-        # Never repaint under a RUNNING buy — but callbacks are append-only,
-        # so the marker must age out or a completed buy would suppress edits
-        # forever. Real buys resolve in minutes; after the window the diff
-        # proceeds (a bought listing shows as reserved → dead badge, correct).
+    if last_verb in ("buy", "offer"):
+        # Never repaint under a RUNNING buy or offer — but callbacks are
+        # append-only, so the marker must age out or a completed action would
+        # suppress edits forever. Both resolve in minutes; after the window
+        # the diff proceeds.
         tapped_at = last_callback[1] if last_callback is not None else now
         if (now - tapped_at) <= timedelta(minutes=policy.buy_suppression_minutes):
             log.info(  # type: ignore[attr-defined]
-                "alert_update_skipped_buy_in_flight",
-                extra={"alert_id": str(watch.alert_id), "change_kind": diff.change},
+                "alert_update_skipped_action_in_flight",
+                extra={
+                    "alert_id": str(watch.alert_id),
+                    "change_kind": diff.change,
+                    "verb": last_verb,
+                },
             )
             return
         last_verb = None  # aged out — reconstruct the phase keyboard
@@ -230,11 +263,23 @@ async def _process_one_watch(
         await store.close_watch(watch.alert_id)
         return
 
+    offer_sent = False
+    if has_offered is not None and entry.offer.enabled:
+        try:
+            offer_sent = await has_offered(listing.marketplace, listing.listing_id)
+        except Exception as exc:
+            log.warning(  # type: ignore[attr-defined]
+                "alert_update_offer_lookup_failed",
+                extra={"alert_id": str(watch.alert_id), "error_class": type(exc).__name__},
+            )
+
     rendered = _render_update(
         snapshot,
         listing,
         diff.change,
         last_verb,
+        entry=entry,
+        offer_sent=offer_sent,
         previous_price_eur=watch.last_price_eur,
         assumed_shipping_eur=assumed_shipping_eur,
         assumed_import_charges_eur=assumed_import_charges_eur,
@@ -321,6 +366,8 @@ def _render_update(
     change: ChangeKind,
     last_verb: str | None,
     *,
+    entry: WishlistEntry,
+    offer_sent: bool,
     previous_price_eur: Decimal,
     assumed_shipping_eur: Decimal,
     assumed_import_charges_eur: Decimal,
@@ -330,6 +377,12 @@ def _render_update(
     The base renderers stay the single source of truth for alert anatomy
     (Decision 5); the comp row is omitted (it was an in-cycle signal at
     dispatch time, not current data).
+
+    Offer surface (wallapop-offer-flow): the offer line + Ofertar
+    eligibility re-derive from the listing's CURRENT values. A price
+    drop can move a negotiable listing to at-or-under ceiling — then the
+    standard alert surface renders instead (Phase 2 when the entry
+    qualifies structurally; the tap-time preflight re-gates as always).
     """
     updated = snapshot.model_copy(update={"listing": listing})
     cost = buyer_cost(
@@ -337,17 +390,98 @@ def _render_update(
         assumed_shipping_eur=assumed_shipping_eur,
         assumed_import_charges_eur=assumed_import_charges_eur,
     )
-    if snapshot.phase == "phase2" and snapshot.phase2_max_price_eur is not None:
-        base = render_phase2_listing_alert(updated, snapshot.phase2_max_price_eur, buyer_cost=cost)
+
+    offer_eur = None
+    offer_target = None
+    ceiling = entry.max_price_solo or entry.max_price_in_device
+    if (
+        entry.offer.enabled
+        and listing.marketplace == "wallapop"
+        and not listing.is_refurbished
+        and ceiling is not None
+    ):
+        offer_target = entry.offer.target_total_eur or ceiling
+        offer_eur = offer_item_price_eur(
+            listing,
+            target_total_eur=offer_target,
+            assumed_shipping_eur=assumed_shipping_eur,
+        )
+        if offer_eur is None:
+            offer_target = None
+
+    dropped_into_budget = (
+        snapshot.phase == "negotiable"
+        and ceiling is not None
+        and buyer_total_eur(
+            listing,
+            assumed_shipping_eur=assumed_shipping_eur,
+            assumed_import_charges_eur=assumed_import_charges_eur,
+        )
+        <= ceiling
+    )
+
+    if snapshot.phase == "negotiable" and not dropped_into_budget and offer_eur is not None:
+        assert offer_target is not None
+        base = render_negotiable_listing_alert(
+            updated,
+            offer_eur=offer_eur,
+            offer_target_total_eur=offer_target,
+            buyer_cost=cost,
+        )
+        keyboard = reconstruct_keyboard(
+            snapshot,
+            last_verb,
+            now_reserved=listing.is_reserved,
+            offer_sent=offer_sent,
+        )
     else:
-        base = render_phase1_listing_alert(updated, buyer_cost=cost)
+        effective_phase = snapshot.phase
+        phase2_max = snapshot.phase2_max_price_eur
+        if snapshot.phase == "negotiable":
+            # Dropped into budget (or the offer surface vanished): render the
+            # standard anatomy. Phase 2 only when the entry structurally
+            # qualifies — the tap-time preflight re-gates everything else.
+            if (
+                dropped_into_budget
+                and entry.phase2.enabled
+                and entry.phase2.max_price_eur is not None
+            ):
+                effective_phase, phase2_max = "phase2", entry.phase2.max_price_eur
+            else:
+                effective_phase, phase2_max = "phase1", None
+        if effective_phase == "phase2" and phase2_max is not None:
+            base = render_phase2_listing_alert(
+                updated,
+                phase2_max,
+                buyer_cost=cost,
+                offer_eur=offer_eur,
+                offer_target_total_eur=offer_target,
+            )
+        else:
+            base = render_phase1_listing_alert(
+                updated,
+                buyer_cost=cost,
+                offer_eur=offer_eur,
+                offer_target_total_eur=offer_target,
+            )
+        surface_snapshot = (
+            snapshot
+            if snapshot.phase != "negotiable"
+            else snapshot.model_copy(update={"phase": effective_phase})
+        )
+        keyboard = reconstruct_keyboard(
+            surface_snapshot,
+            last_verb,
+            now_reserved=listing.is_reserved,
+            offer_sent=offer_sent,
+            offer_eligible=offer_eur is not None,
+        )
 
     banner = update_banner_line(
         change,
         old_price_eur=previous_price_eur,
         new_price_eur=listing.price_eur,
     )
-    keyboard = reconstruct_keyboard(snapshot, last_verb, now_reserved=listing.is_reserved)
     return apply_update_banner(base, banner, keyboard)
 
 

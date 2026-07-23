@@ -160,6 +160,58 @@ def buyer_cost(
     )
 
 
+# Wallapop's offer form rejects discounts deeper than 30 % of the asking
+# price ("Tu oferta debe ser de al menos X € (-30%)", operator-captured
+# 2026-07-22). The floor is inclusive: exactly 70 % of asking is accepted.
+OFFER_PLATFORM_FLOOR_RATIO: Final[Decimal] = Decimal("0.70")
+
+_ONE_EURO: Final[Decimal] = Decimal("1")
+
+
+def offer_item_price_eur(
+    listing: Listing,
+    *,
+    target_total_eur: Decimal,
+    assumed_shipping_eur: Decimal,
+) -> Decimal | None:
+    """Largest whole-euro item price whose Wallapop buyer total fits the target.
+
+    The returned price ``O`` satisfies ``O + shipping + proteccion(O) <=
+    target_total_eur`` (shipping = the parsed value when known, else the
+    ``assumed_shipping_eur`` buffer — never zero). Whole euros because that is
+    how offers read in a negotiation, and flooring is always conservative.
+
+    Returns ``None`` — offer not possible — when the listing is not Wallapop,
+    when no positive whole-euro price fits the target, when the fit price is
+    not strictly below the asking price (nothing to negotiate: the listing
+    already fits, or the target is above asking), or when the fit price falls
+    under the platform floor of :data:`OFFER_PLATFORM_FLOOR_RATIO` x asking
+    (Wallapop rejects offers below 70 % of the asking price).
+    """
+    if listing.marketplace != "wallapop":
+        return None
+    shipping = listing.shipping_eur if listing.shipping_eur is not None else assumed_shipping_eur
+    budget = target_total_eur - shipping
+    # Closed-form guess on the variable-fee branch, then settle with the real
+    # fee schedule (flat branch ≤ 13 €, cap at the documented maximum).
+    if budget > 0:
+        guess = int((budget - _PROTECCION_BASE_EUR) / (_ONE_EURO + _PROTECCION_PCT))
+    else:
+        guess = 0
+    candidate = Decimal(max(guess, 0))
+    while candidate + _ONE_EURO + proteccion_wallapop_fee(candidate + _ONE_EURO) <= budget:
+        candidate += _ONE_EURO
+    while candidate >= _ONE_EURO and candidate + proteccion_wallapop_fee(candidate) > budget:
+        candidate -= _ONE_EURO
+    if candidate < _ONE_EURO:
+        return None
+    if candidate >= listing.price_eur:
+        return None
+    if candidate < listing.price_eur * OFFER_PLATFORM_FLOOR_RATIO:
+        return None
+    return candidate
+
+
 def buyer_total_eur(
     listing: Listing,
     *,
@@ -178,8 +230,10 @@ __all__ = [
     "DEFAULT_ASSUMED_IMPORT_CHARGES_EUR",
     "DEFAULT_ASSUMED_SHIPPING_EUR",
     "EU_COUNTRY_CODES",
+    "OFFER_PLATFORM_FLOOR_RATIO",
     "BuyerCost",
     "buyer_cost",
     "buyer_total_eur",
+    "offer_item_price_eur",
     "proteccion_wallapop_fee",
 ]

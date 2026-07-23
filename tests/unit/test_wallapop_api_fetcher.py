@@ -248,6 +248,34 @@ async def test_search_maps_reserved_flag_to_is_reserved(tmp_path: Path) -> None:
     assert listings[1].is_reserved is False
 
 
+@pytest.mark.asyncio
+async def test_search_maps_refurbished_flag_to_is_refurbished(tmp_path: Path) -> None:
+    """``is_refurbished: {flag: true}`` must surface as
+    ``Listing.is_refurbished=True``; ``flag: false`` and a missing
+    envelope both surface as False. The offer surface pre-filters on
+    this — refurbished listings don't accept offers (wallapop-offer-flow,
+    live-probed 2026-07-22).
+    """
+
+    def handler(_: _RecordedRequest) -> WallapopResponse:
+        payload = _valid_search_payload()
+        items = payload["data"]["section"]["items"]
+        items[0]["is_refurbished"] = {"flag": True}
+        items[1]["is_refurbished"] = {"flag": False}
+        return WallapopResponse(status_code=200, text=json.dumps(payload), json_data=payload)
+
+    fetcher = _build_fetcher(tmp_path, handler)
+    try:
+        listings = await fetcher.search(
+            SearchQuery(keyword="WD Red Plus 4TB", marketplace="wallapop")
+        )
+    finally:
+        await fetcher.aclose()
+
+    assert listings[0].is_refurbished is True
+    assert listings[1].is_refurbished is False
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Error mapping (NFR-I4)
 # ─────────────────────────────────────────────────────────────────────────

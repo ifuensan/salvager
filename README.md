@@ -173,6 +173,39 @@ Every Comprar tap that reached the orchestrator appears here — including the a
 
 ---
 
+## Ofertas: Wallapop "hacer oferta"
+
+Wallapop lets a buyer propose a lower price ("hacer oferta"); the seller accepts, rejects, or counters. Salvager can send those offers — but, like Comprar, **only when the operator taps the "💰 Ofertar" button on a Telegram alert**. No offer is ever sent autonomously.
+
+### Enabling offers for a wishlist entry
+
+By default every entry has `offer.enabled: false` and nothing changes. To opt an entry in:
+
+```bash
+uv run salvager offer enable <entry-ref>            # offers aim at the entry ceiling
+uv run salvager offer enable <entry-ref> -t 70.00   # …or at a lower delivered-total target
+```
+
+Two things happen for an opted-in entry:
+
+- **Negotiable alerts.** Wallapop listings whose delivered total (item + shipping + Protección) is over the entry ceiling but within `ceiling × (1 + offer.band_pct)` — listings that used to be silently filtered — now produce a `💰` alert showing the computed offer and an "Ofertar · Saltar · Ver" keyboard (never Comprar: they're over ceiling).
+- **Ofertar on standard alerts.** When a computed offer would undercut the asking price (routine only if you set a target below the ceiling), the ordinary 📦/🟢 alerts grow a `💰 Ofertar` row.
+
+The offer amount is never chosen by hand: it's the largest whole-euro item price whose delivered total fits your target, bounded by Wallapop's own floor of 70 % of the asking price. It's shown on the alert before you tap, and recomputed from a fresh re-fetch at tap time — drift aborts the send.
+
+### What an Ofertar tap does — and does NOT do
+
+Tap → preflight (entry still opted in, no lockout, daily budget free, no prior offer on this listing) → re-fetch by internal id (gone/reserved/price-drift aborts fail-closed) → TinyFish drives the offer form with EXACTLY the computed amount → `💰 Oferta enviada`.
+
+**v1 ends there.** Salvager does not watch for the seller's response. If they accept, Wallapop gives you **24 h to buy at the accepted price — and the item is NOT reserved meanwhile**: follow through in the Wallapop app. Guardrails: one offer per listing ever; a self-imposed budget of `offer.daily_limit` sends per rolling 24 h (default 5, under Wallapop's 10/day account cap); `offer.lockout_threshold` consecutive failures lock the path until `salvager offer enable` clears it; `offer.kill_switch_global` kills it unconditionally. Every attempt lands in the append-only `offers` audit table.
+
+```bash
+uv run salvager offer status         # enablement table + lockout + budget
+uv run salvager offer disable --all  # kill-everything path (typed confirmation)
+```
+
+---
+
 ## Planning artifacts
 
 The BMAD planning artifacts that drove the design and implementation plan live in [`_bmad-output/planning-artifacts/`](_bmad-output/planning-artifacts):
