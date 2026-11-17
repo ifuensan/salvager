@@ -155,6 +155,10 @@ wallapop:
   # nationwide-shippable items regardless of these coords.
   latitude: 40.4168
   longitude: -3.7038
+  # Paid TinyFish search fallback — runs per rolling 24 h. 0 (default)
+  # = off: an expired session is served by the public API anonymously,
+  # and one TinyFish search run costs 4-8 agent steps (~0,06-0,13 $).
+  tinyfish_search_daily_limit: 0
 
 # ─────────────────────────────────────────────────────────────────────────
 # logging — structured JSON Lines on stdout (NFR-O1)

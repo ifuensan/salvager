@@ -105,7 +105,7 @@ Scheduler runs in-process (asyncio-based, `adapters/asyncio_scheduler/`). TinyFi
 
 ## Renewing the Wallapop session
 
-The Wallapop session cookie lasts ~30 days (`__Secure-next-auth.session-token`). When it expires the daemon sends a ⚠️ **Sesión Wallapop expirada** alert, pauses the paid TinyFish fallback after 3 failures, and keeps eBay.es running. Renew it and the daemon picks the new cookie up on the next poll cycle — no restart.
+The Wallapop session cookie lasts ~30 days (`__Secure-next-auth.session-token`). Since v0.5.2 an expired session is **not** an outage: search and the pre-buy reconciliation re-fetch are public endpoints, so the daemon serves them anonymously (log line `wallapop_anonymous_mode_entered`) and alerts keep flowing. Only if Wallapop also rejects the anonymous call does the ⚠️ **Sesión Wallapop expirada** alert fire. The paid TinyFish search fallback is off by default (`wallapop.tinyfish_search_daily_limit: 0`). Renew the cookie at your convenience and the daemon picks it up on the next poll cycle — no restart.
 
 `salvager login wallapop` opens Playwright's Chromium, and **Google refuses to sign in from an automated browser** — if your Wallapop account uses "Continuar con Google", export the cookie from your normal browser instead:
 

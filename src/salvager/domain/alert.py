@@ -1148,8 +1148,8 @@ def _body_daemon_stopped(ctx: Mapping[str, Any]) -> list[str]:
 
 def _body_wallapop_session_expired(_ctx: Mapping[str, Any]) -> list[str]:
     return [
-        _prose("Adapter: wallapop_api (devuelve 401)"),
-        _prose("Fallback: wallapop_tinyfish (de pago; se pausa si falla)"),
+        _prose("Adapter: wallapop_api (401, también sin sesión)"),
+        _prose("Fallback: TinyFish solo si wallapop.tinyfish_search_daily_limit > 0"),
         "",
         _prose(_NEXT_STEP_HEADER),
         _prose("1. ")

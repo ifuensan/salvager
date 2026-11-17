@@ -484,7 +484,12 @@ def _build_wallapop_job(
         latitude=config.wallapop.latitude,
         longitude=config.wallapop.longitude,
     )
-    tinyfish_fetcher: PageFetcher = WallapopTinyfishFetcher(api_key=env.TINYFISH_API_KEY)
+    daily_limit = config.wallapop.tinyfish_search_daily_limit
+    tinyfish_fetcher: PageFetcher | None = (
+        WallapopTinyfishFetcher(api_key=env.TINYFISH_API_KEY, rate_limit_per_day=daily_limit)
+        if daily_limit > 0
+        else None
+    )
     fallback = WallapopFallbackFetcher(
         api_fetcher=api_fetcher,
         tinyfish_fetcher=tinyfish_fetcher,
