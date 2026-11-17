@@ -624,6 +624,38 @@ async def test_fallback_fetcher_redetects_refreshed_cookie(tmp_path: Path) -> No
     assert EventName.wallapop_session_renewed in reporter.events()
 
 
+async def test_cookie_renewed_during_the_expiry_cycle_is_still_detected(tmp_path: Path) -> None:
+    """The operator renews the cookie while the 401 cycle's TinyFish call
+    is still running: the renewed file must not become the expired baseline."""
+    cookies_path = tmp_path / "wallapop_cookies.txt"
+    _write_cookie(cookies_path, mtime=1_000_000.0)
+
+    class _RenewingTinyfish(_FakeFetcher):
+        async def search(self, query: SearchQuery) -> list[Listing]:
+            _write_cookie(cookies_path, mtime=2_000_000.0)
+            return await super().search(query)
+
+    api = _FakeFetcher()
+    api.search_response = WallapopSessionExpired("401")
+    tinyfish = _RenewingTinyfish()
+    tinyfish.search_response = [_listing("t1")]
+    fetcher = WallapopFallbackFetcher(
+        api_fetcher=api,
+        tinyfish_fetcher=tinyfish,
+        reporter=_FakeReporter(),
+        cookies_path=cookies_path,
+    )
+
+    await fetcher.search(_query())
+    assert fetcher.health.api_attempt_enabled() is False
+
+    api.search_response = [_listing("renewed")]
+    listings = await fetcher.search(_query())
+
+    assert [listing.listing_id for listing in listings] == ["renewed"]
+    assert fetcher.health.api_attempt_enabled() is True
+
+
 async def test_fallback_fetcher_does_not_redetect_unchanged_cookie(tmp_path: Path) -> None:
     """A stale cookie file (mtime unchanged) must NOT re-enable the API
     path — that would just burn a doomed API call every cycle."""

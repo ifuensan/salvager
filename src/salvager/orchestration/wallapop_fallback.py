@@ -325,6 +325,10 @@ class WallapopFallbackFetcher(PageFetcher):
         api_was_enabled = self._health.api_attempt_enabled()
         if not api_was_enabled:
             self._maybe_redetect_cookie()
+        # Read the cookie mtime BEFORE the fetch: the expiry report and the
+        # TinyFish fallback can take minutes, and a cookie the operator
+        # renews meanwhile must not be mistaken for the expired one.
+        mtime_before_fetch = self._current_cookie_mtime()
 
         results = await wallapop_two_path_fetch(
             query,
@@ -338,7 +342,7 @@ class WallapopFallbackFetcher(PageFetcher):
         # cookie's mtime so a later rewrite (operator re-login) is
         # detectable on the next cycle.
         if api_was_enabled and not self._health.api_attempt_enabled():
-            self._cookie_mtime_at_expiry = self._current_cookie_mtime()
+            self._cookie_mtime_at_expiry = mtime_before_fetch
 
         return results
 
