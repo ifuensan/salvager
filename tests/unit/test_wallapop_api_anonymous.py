@@ -133,5 +133,37 @@ async def test_successful_refresh_never_goes_anonymous(cookies_path: Path) -> No
     assert "anonymous" not in session.calls
 
 
+async def test_recovery_through_refresh_leaves_anonymous_mode(cookies_path: Path) -> None:
+    session = _FakeSession(cookies_path)
+    await session.call("/api/v3/search/section", {})
+
+    # Renewed cookie whose access token is stale: the first authed attempts
+    # 401, the refresh succeeds and the refreshed call goes through.
+    _write_cookies(cookies_path, mtime=2_000_000.0)
+    session.refresh_ok = True
+    session.calls.clear()
+
+    async def _ok_after_refresh(
+        path: str,
+        params: dict[str, str],
+        cookies: dict[str, str],
+        *,
+        anonymous: bool = False,
+    ) -> WallapopResponse:
+        session.calls.append("anonymous" if anonymous else "authed")
+        return _OK if "refresh" in session.calls else _EXPIRED
+
+    session._do_request = _ok_after_refresh  # type: ignore[method-assign]
+    assert (await session.call("/api/v3/search/section", {})).status_code == 200
+
+    # Back to a plain fake that accepts the (now fresh) credentials: had
+    # anonymous mode stuck, the next call would go anonymous first.
+    del session._do_request
+    session.authed = _OK
+    session.calls.clear()
+    await session.call("/api/v3/search/section", {})
+    assert session.calls == ["authed"], "the next call must use the recovered credentials"
+
+
 def test_tinyfish_search_is_off_by_default() -> None:
     assert WallapopConfig().tinyfish_search_daily_limit == 0

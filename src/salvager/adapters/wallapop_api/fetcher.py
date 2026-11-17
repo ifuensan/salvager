@@ -508,13 +508,7 @@ class _RefreshingSession:
         cookies = self._ensure_cookies_loaded()
         response = await self._do_request(path, params, cookies)
         if response.status_code != 401:
-            if self._anonymous_mode:
-                self._anonymous_mode = False
-                self._log.info(
-                    "wallapop_anonymous_mode_exited",
-                    extra={"marketplace": "wallapop"},
-                )
-            return response
+            return self._authenticated(response)
 
         # 401 → refresh dance → retry once. Serialize through the lock
         # so concurrent callers don't double-refresh; once inside the
@@ -526,13 +520,20 @@ class _RefreshingSession:
         async with self._refresh_lock:
             retry_response = await self._do_request(path, params, self._cookies or {})
             if retry_response.status_code != 401:
-                return retry_response
+                return self._authenticated(retry_response)
             refreshed = await self._refresh_session()
             if refreshed:
                 refreshed_response = await self._do_request(path, params, self._cookies or {})
                 if refreshed_response.status_code != 401:
-                    return refreshed_response
+                    return self._authenticated(refreshed_response)
             return await self._call_anonymously(path, params, response)
+
+    def _authenticated(self, response: WallapopResponse) -> WallapopResponse:
+        """Pass an authenticated non-401 response through, leaving anonymous mode."""
+        if self._anonymous_mode:
+            self._anonymous_mode = False
+            self._log.info("wallapop_anonymous_mode_exited", extra={"marketplace": "wallapop"})
+        return response
 
     async def _call_anonymously(
         self,
