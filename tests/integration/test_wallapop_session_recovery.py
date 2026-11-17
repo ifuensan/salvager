@@ -144,9 +144,9 @@ async def test_full_session_expiry_recovery_cycle(tmp_path: Path) -> None:
     # No listing alerts lost — the TinyFish path delivered this cycle.
     assert [listing.listing_id for listing in cycle2] == ["t1"]
     assert fetcher.health.api_attempt_enabled() is False
-    # One operational alert so far: the info-severity "session expired".
+    # One operational alert so far: the warn-severity "session expired".
     assert len(telegram.sends) == 1
-    assert telegram.sends[0].text.startswith("ℹ️ ")  # noqa: RUF001
+    assert telegram.sends[0].text.startswith("⚠️ ")
     assert "Sesión Wallapop expirada" in telegram.sends[0].text
 
     # ── Operator re-runs `login wallapop` → cookie file rewritten ───
