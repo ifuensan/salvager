@@ -38,8 +38,8 @@ TinyFish runs drained the credits.
 - Cookie renewal is detected even if it lands mid-cycle or after a
   rejected first renewal.
 - `wallapop_tinyfish_unavailable` logs the HTTP status + message.
-- README: "Renewing the Wallapop session" runbook (`cp`, not `mv`, to
-  keep the `:Z` SELinux label).
+- README: "Renewing the Wallapop session" runbook (copy into the auth
+  dir + atomic rename, so the file keeps the `:Z` SELinux label).
 
 Phase 2 buy/offer TinyFish flows are unchanged.
 

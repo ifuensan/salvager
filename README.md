@@ -111,12 +111,15 @@ The Wallapop session cookie lasts ~30 days (`__Secure-next-auth.session-token`).
 
 1. Sign in at `https://es.wallapop.com` in your everyday Chrome.
 2. Export the site's cookies in Netscape format with the open-source **Get cookies.txt LOCALLY** extension (not the delisted "Get cookies.txt").
-3. Copy it over the existing file — `cp`, not `mv`, so the file keeps the container's SELinux label (with `:Z` volumes a moved file stays `user_home_t` and the container can't read it):
+3. Copy it into the auth directory under a temporary name, then rename it over the live file. The rename is atomic, so a poll never reads a half-written cookie, and a file created inside the directory inherits the container's SELinux label. (A file `mv`-ed in from `~/Downloads` keeps `user_home_t`, and with `:Z` volumes the container can't read it.) Finally, delete the downloaded copy:
 
 ```bash
-cp ~/Downloads/es.wallapop.com_cookies.txt <data_dir>/auth/wallapop_cookies.txt
-chmod 600 <data_dir>/auth/wallapop_cookies.txt
-grep -cE "accessToken|session-token" <data_dir>/auth/wallapop_cookies.txt   # 2
+DATA_DIR=./data   # your configured data_dir on the host (e.g. ~/salvager/data)
+cp ~/Downloads/es.wallapop.com_cookies.txt "$DATA_DIR/auth/.wallapop_cookies.tmp"
+chmod 600 "$DATA_DIR/auth/.wallapop_cookies.tmp"
+grep -cE "accessToken|session-token" "$DATA_DIR/auth/.wallapop_cookies.tmp"   # 2
+mv "$DATA_DIR/auth/.wallapop_cookies.tmp" "$DATA_DIR/auth/wallapop_cookies.txt"
+rm ~/Downloads/es.wallapop.com_cookies.txt
 ```
 
 The log line `wallapop_cookie_refresh_detected` followed by `wallapop_session_renewed` confirms the recovery.
