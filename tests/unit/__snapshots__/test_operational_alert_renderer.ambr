@@ -249,7 +249,7 @@
   Fallback: wallapop\_tinyfish \(de pago; se pausa si falla\)
   
   Próximo paso:
-  1\. `salvager login wallapop` hoy, o exporta cookies\.txt desde tu navegador a data/auth/wallapop\_cookies\.txt
+  1\. `salvager login wallapop` hoy, o exporta cookies\.txt a auth/wallapop\_cookies\.txt en tu data\_dir
   2\. sin reinicio: el daemon detecta la cookie nueva en el siguiente ciclo
   '''
 # ---

@@ -1154,7 +1154,7 @@ def _body_wallapop_session_expired(_ctx: Mapping[str, Any]) -> list[str]:
         _prose(_NEXT_STEP_HEADER),
         _prose("1. ")
         + _cmd("salvager login wallapop")
-        + _prose(" hoy, o exporta cookies.txt desde tu navegador a data/auth/wallapop_cookies.txt"),
+        + _prose(" hoy, o exporta cookies.txt a auth/wallapop_cookies.txt en tu data_dir"),
         _prose("2. sin reinicio: el daemon detecta la cookie nueva en el siguiente ciclo"),
     ]
 

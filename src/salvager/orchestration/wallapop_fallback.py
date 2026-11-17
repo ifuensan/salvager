@@ -322,9 +322,12 @@ class WallapopFallbackFetcher(PageFetcher):
         return self._health
 
     async def search(self, query: SearchQuery) -> list[Listing]:
-        api_was_enabled = self._health.api_attempt_enabled()
-        if not api_was_enabled:
+        if not self._health.api_attempt_enabled():
             self._maybe_redetect_cookie()
+        # Read AFTER redetection: a renewed cookie re-enables the API, and
+        # if that renewed cookie is rejected too, this cycle must snapshot
+        # it as the new expired baseline so the next renewal is detected.
+        api_was_enabled = self._health.api_attempt_enabled()
         # Read the cookie mtime BEFORE the fetch: the expiry report and the
         # TinyFish fallback can take minutes, and a cookie the operator
         # renews meanwhile must not be mistaken for the expired one.

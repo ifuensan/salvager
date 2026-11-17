@@ -656,6 +656,36 @@ async def test_cookie_renewed_during_the_expiry_cycle_is_still_detected(tmp_path
     assert fetcher.health.api_attempt_enabled() is True
 
 
+async def test_second_renewal_is_detected_after_a_rejected_first_renewal(tmp_path: Path) -> None:
+    cookies_path = tmp_path / "wallapop_cookies.txt"
+    _write_cookie(cookies_path, mtime=1_000_000.0)
+    api = _FakeFetcher()
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = [_listing("t")]
+    fetcher = WallapopFallbackFetcher(
+        api_fetcher=api,
+        tinyfish_fetcher=tinyfish,
+        reporter=_FakeReporter(),
+        cookies_path=cookies_path,
+    )
+
+    # Cookie A expires.
+    api.search_response = WallapopSessionExpired("401")
+    await fetcher.search(_query())
+    # Cookie B is written — and rejected too.
+    _write_cookie(cookies_path, mtime=2_000_000.0)
+    await fetcher.search(_query())
+    assert fetcher.health.api_attempt_enabled() is False
+
+    # Cookie C is written and works.
+    _write_cookie(cookies_path, mtime=3_000_000.0)
+    api.search_response = [_listing("renewed")]
+    listings = await fetcher.search(_query())
+
+    assert [listing.listing_id for listing in listings] == ["renewed"]
+    assert fetcher.health.api_attempt_enabled() is True
+
+
 async def test_fallback_fetcher_does_not_redetect_unchanged_cookie(tmp_path: Path) -> None:
     """A stale cookie file (mtime unchanged) must NOT re-enable the API
     path — that would just burn a doomed API call every cycle."""
