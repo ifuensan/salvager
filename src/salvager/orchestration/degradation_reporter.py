@@ -49,6 +49,11 @@ from salvager.orchestration.health_state import HealthState
 #: ``config.observability.degradation_dedup_window_seconds``.
 DEFAULT_DEDUP_WINDOW_SECONDS: int = 300
 
+#: ctx keys that change on every report of the same condition (a running
+#: counter) and so must not take part in dedup matching — otherwise no two
+#: reports ever match and the window never suppresses anything.
+_VOLATILE_CTX_KEYS: frozenset[str] = frozenset({"consecutive_failures"})
+
 
 @runtime_checkable
 class Reporter(Protocol):
@@ -79,7 +84,8 @@ def _ctx_fingerprint(ctx: Mapping[str, Any]) -> str:
     ``sort_keys`` makes the fingerprint order-independent; ``default=str``
     keeps it total over datetimes, UUIDs, Decimals, etc.
     """
-    return json.dumps(ctx, sort_keys=True, default=str)
+    stable = {k: v for k, v in ctx.items() if k not in _VOLATILE_CTX_KEYS}
+    return json.dumps(stable, sort_keys=True, default=str)
 
 
 class DegradationReporter:

@@ -13,14 +13,26 @@ Story 4.3 — degradation reporting + recovery
 Every degraded condition is now reported through the injected
 :class:`Reporter` (the single NFR-R3 fan-out), not logged ad-hoc:
 
-- ``WallapopSessionExpired`` → ``info`` ``wallapop_session_expired``;
+- ``WallapopSessionExpired`` → ``warn`` ``wallapop_session_expired``;
   the API path latches off, the cycle continues on TinyFish.
 - a non-401 ``WallapopError`` → ``info`` ``wallapop_api_degraded``.
 - the first API success after an operator re-login →
   ``info`` ``wallapop_session_renewed``.
-- the **second consecutive** cycle with both paths down →
+- the **second consecutive** fetch with both paths down →
   ``warn`` ``wallapop_both_paths_down`` (one blip is just a log line —
-  a ⚠️ for a single transient failure would be a false alarm).
+  a ⚠️ for a single transient failure would be a false alarm). It
+  fires **once per streak**: every later failure of the same streak is
+  a log line only. (Pre-v0.5.1 it fired on every failing fetch — ~2,900
+  ⚠️/day during the 2026-11-03 session expiry.)
+
+TinyFish pause
+--------------
+TinyFish is paid. After :data:`_TINYFISH_PAUSE_THRESHOLD` consecutive
+TinyFish failures that reached the network (rate-limit refusals don't
+count — they never left the process), the TinyFish path pauses: no
+further TinyFish calls until the operator renews the Wallapop cookie or
+restarts the daemon. Without it, an expired session meant ~475 failing
+paid calls per day for two weeks.
 
 Recovery is automatic: :class:`WallapopFallbackFetcher` watches the
 cookie file's mtime. When the operator re-runs ``login wallapop`` the
@@ -39,6 +51,7 @@ from typing import Final
 from salvager.domain.alert import EventName
 from salvager.domain.errors import (
     TinyFishError,
+    TinyFishRateLimited,
     WallapopError,
     WallapopSessionExpired,
 )
@@ -56,6 +69,10 @@ SOURCE_TINYFISH: Final[str] = "wallapop_tinyfish"
 #: failure is just a log line — a single transient blip is not worth a
 #: high-priority operational alert (UX-DR13 "no false ⚠️").
 _BOTH_DOWN_ALERT_THRESHOLD: Final[int] = 2
+
+#: Consecutive TinyFish failures (excluding rate-limit refusals) before
+#: the paid TinyFish path pauses until a cookie renewal or a restart.
+_TINYFISH_PAUSE_THRESHOLD: Final[int] = 3
 
 
 class WallapopHealth:
@@ -79,6 +96,7 @@ class WallapopHealth:
         self._api_attempt_enabled = True
         self._pending_renewal_confirmation = False
         self._consecutive_both_down = 0
+        self._consecutive_tinyfish_failures = 0
 
     def api_attempt_enabled(self) -> bool:
         """``True`` iff the unofficial-API path should be tried this cycle."""
@@ -97,6 +115,8 @@ class WallapopHealth:
         """
         self._api_attempt_enabled = True
         self._pending_renewal_confirmation = True
+        # A fresh cookie is the operator's "try again" — unpause TinyFish too.
+        self._consecutive_tinyfish_failures = 0
 
     def consume_pending_renewal(self) -> bool:
         """Atomically read-and-clear the renewal-confirmation flag.
@@ -116,6 +136,19 @@ class WallapopHealth:
     def reset_failure_streak(self) -> None:
         """Clear the both-paths-down streak — called after any successful fetch."""
         self._consecutive_both_down = 0
+
+    def tinyfish_attempt_enabled(self) -> bool:
+        """``False`` once TinyFish has failed :data:`_TINYFISH_PAUSE_THRESHOLD` times in a row."""
+        return self._consecutive_tinyfish_failures < _TINYFISH_PAUSE_THRESHOLD
+
+    def record_tinyfish_failure(self) -> int:
+        """Increment the consecutive TinyFish failure streak; return the new count."""
+        self._consecutive_tinyfish_failures += 1
+        return self._consecutive_tinyfish_failures
+
+    def reset_tinyfish_failures(self) -> None:
+        """Clear the TinyFish failure streak — called after a TinyFish success."""
+        self._consecutive_tinyfish_failures = 0
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -150,7 +183,7 @@ async def wallapop_two_path_fetch(
         except WallapopSessionExpired as exc:
             health.mark_api_session_expired()
             await reporter.report(
-                "info",
+                "warn",
                 EventName.wallapop_session_expired,
                 {
                     "adapter": SOURCE_API,
@@ -180,29 +213,57 @@ async def wallapop_two_path_fetch(
             )
             return results
 
+    if not health.tinyfish_attempt_enabled():
+        await _record_both_paths_down(health, reporter, "TinyFishPaused")
+        return []
+
     try:
         results = await tinyfish_fetcher.search(query)
     except (TinyFishError, WallapopError) as exc:
-        count = health.record_both_paths_down()
-        ctx = {
-            "consecutive_failures": count,
-            "last_error_class": exc.__class__.__name__,
-            "api_attempt_enabled": health.api_attempt_enabled(),
-        }
-        if count >= _BOTH_DOWN_ALERT_THRESHOLD:
-            await reporter.report("warn", EventName.wallapop_both_paths_down, ctx)
-        else:
-            # First blip: visible in the log, but no ⚠️ — a single
-            # transient failure is not a high-priority operational event.
-            log.warning("wallapop_both_paths_down", extra=ctx)
+        # A rate-limit refusal never reached the network (or was the
+        # remote saying "slow down") — it says nothing about whether
+        # TinyFish works, so it does not count toward the pause.
+        if not isinstance(exc, TinyFishRateLimited):
+            tinyfish_failures = health.record_tinyfish_failure()
+            if tinyfish_failures == _TINYFISH_PAUSE_THRESHOLD:
+                log.warning(
+                    "wallapop_tinyfish_paused",
+                    extra={
+                        "consecutive_tinyfish_failures": tinyfish_failures,
+                        "last_error_class": exc.__class__.__name__,
+                    },
+                )
+        await _record_both_paths_down(health, reporter, exc.__class__.__name__)
         return []
 
     health.reset_failure_streak()
+    health.reset_tinyfish_failures()
     log.info(
         "wallapop_path_success",
         extra={"source": SOURCE_TINYFISH, "result_count": len(results)},
     )
     return results
+
+
+async def _record_both_paths_down(
+    health: WallapopHealth,
+    reporter: Reporter,
+    last_error_class: str,
+) -> None:
+    """Advance the both-paths-down streak; ⚠️ exactly once per streak."""
+    count = health.record_both_paths_down()
+    ctx = {
+        "consecutive_failures": count,
+        "last_error_class": last_error_class,
+        "api_attempt_enabled": health.api_attempt_enabled(),
+    }
+    if count == _BOTH_DOWN_ALERT_THRESHOLD:
+        await reporter.report("warn", EventName.wallapop_both_paths_down, ctx)
+    else:
+        # First blip, or a streak already alerted on: log line only — a
+        # single transient failure is not worth a ⚠️, and one ⚠️ per
+        # streak is enough to get the operator's attention.
+        get_logger("orchestration.wallapop_fallback").warning("wallapop_both_paths_down", extra=ctx)
 
 
 class WallapopFallbackFetcher(PageFetcher):

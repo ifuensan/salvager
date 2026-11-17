@@ -91,13 +91,13 @@ async def test_report_fans_out_to_log_health_and_telegram(
 
     await reporter.report(
         "info",
-        EventName.wallapop_session_expired,
+        EventName.wallapop_api_degraded,
         {"adapter": "wallapop_api", "fallback_path_status": "active"},
     )
 
     # Sink 1: structured log carries the event + full ctx + severity.
     records = _records(capsys.readouterr().out)
-    expired = next(r for r in records if r["event"] == "wallapop_session_expired")
+    expired = next(r for r in records if r["event"] == "wallapop_api_degraded")
     assert expired["severity"] == "info"
     assert expired["adapter"] == "wallapop_api"
     assert expired["fallback_path_status"] == "active"
@@ -148,14 +148,14 @@ async def test_telegram_failure_does_not_block_log_or_health(
     # Must not raise even though the Telegram surface is down.
     await reporter.report(
         "info",
-        EventName.wallapop_session_expired,
+        EventName.wallapop_api_degraded,
         {"adapter": "wallapop_api"},
     )
 
     records = _records(capsys.readouterr().out)
     events = {r["event"] for r in records}
     # The primary event still logged...
-    assert "wallapop_session_expired" in events
+    assert "wallapop_api_degraded" in events
     # ...plus the secondary "Telegram is down" line so the operator sees
     # the outage even though they can't receive it via Telegram.
     assert "degradation_telegram_dispatch_failed" in events
@@ -179,10 +179,10 @@ async def test_failed_telegram_send_does_not_arm_the_dedup_window(
         dedup_window_seconds=300,
         clock=lambda: _T0,
     )
-    await reporter.report("info", EventName.wallapop_session_expired, {})
+    await reporter.report("info", EventName.wallapop_api_degraded, {})
     # Recover the surface and report the same event again immediately.
     telegram._fail = False
-    await reporter.report("info", EventName.wallapop_session_expired, {})
+    await reporter.report("info", EventName.wallapop_api_degraded, {})
     # The second attempt went through — it was not deduped.
     assert len(telegram.sends) == 1
 
@@ -205,14 +205,14 @@ async def test_duplicate_within_window_skips_telegram_but_still_logs(
     )
     ctx = {"adapter": "wallapop_api"}
 
-    await reporter.report("info", EventName.wallapop_session_expired, ctx)
-    await reporter.report("info", EventName.wallapop_session_expired, ctx)
+    await reporter.report("info", EventName.wallapop_api_degraded, ctx)
+    await reporter.report("info", EventName.wallapop_api_degraded, ctx)
 
     # Only the first emission Telegram'd...
     assert len(telegram.sends) == 1
     # ...but BOTH occurrences logged (the second as a dedup notice + the event).
     records = _records(capsys.readouterr().out)
-    event_lines = [r for r in records if r["event"] == "wallapop_session_expired"]
+    event_lines = [r for r in records if r["event"] == "wallapop_api_degraded"]
     assert len(event_lines) == 2
     assert any(r["event"] == "degradation_telegram_deduped" for r in records)
 
@@ -226,8 +226,8 @@ async def test_duplicate_after_window_telegrams_again() -> None:
         clock=_clock_from(_T0, _T0 + timedelta(seconds=301)),
     )
     ctx = {"adapter": "wallapop_api"}
-    await reporter.report("info", EventName.wallapop_session_expired, ctx)
-    await reporter.report("info", EventName.wallapop_session_expired, ctx)
+    await reporter.report("info", EventName.wallapop_api_degraded, ctx)
+    await reporter.report("info", EventName.wallapop_api_degraded, ctx)
     # 301s elapsed > 300s window → the second alert is sent.
     assert len(telegram.sends) == 2
 
@@ -255,8 +255,8 @@ async def test_zero_window_disables_dedup() -> None:
         clock=lambda: _T0,
     )
     ctx = {"adapter": "wallapop_api"}
-    await reporter.report("info", EventName.wallapop_session_expired, ctx)
-    await reporter.report("info", EventName.wallapop_session_expired, ctx)
+    await reporter.report("info", EventName.wallapop_api_degraded, ctx)
+    await reporter.report("info", EventName.wallapop_api_degraded, ctx)
     assert len(telegram.sends) == 2
 
 
@@ -298,3 +298,24 @@ def test_render_operational_alert_has_a_single_caller() -> None:
         f"render_operational_alert called outside DegradationReporter: {offenders}. "
         "All operational Telegram alerts must fan out through DegradationReporter.report()."
     )
+
+
+async def test_running_failure_counter_does_not_defeat_dedup() -> None:
+    """``consecutive_failures`` changes on every report of the same
+    condition; fingerprinting it meant no two reports ever matched."""
+    telegram = _RecordingTelegram()
+    reporter = DegradationReporter(
+        telegram_surface=telegram,
+        health_state=HealthState(),
+        dedup_window_seconds=300,
+        clock=lambda: _T0,
+    )
+
+    for count in range(2, 12):
+        await reporter.report(
+            "warn",
+            EventName.wallapop_both_paths_down,
+            {"consecutive_failures": count, "last_error_class": "TinyFishRateLimited"},
+        )
+
+    assert len(telegram.sends) == 1

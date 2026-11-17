@@ -34,7 +34,7 @@ from salvager.domain.alert import (
 _FIXTURES: dict[EventName, tuple[Severity, dict[str, Any]]] = {
     EventName.daemon_started: ("info", {"version": "0.1.0", "jobs": "wallapop_poll, ebay_poll"}),
     EventName.daemon_stopped: ("info", {"reason": "SIGTERM"}),
-    EventName.wallapop_session_expired: ("info", {}),
+    EventName.wallapop_session_expired: ("warn", {}),
     EventName.wallapop_session_renewed: ("info", {}),
     EventName.wallapop_api_degraded: ("info", {"error_class": "WallapopApiError"}),
     EventName.wallapop_both_paths_down: (

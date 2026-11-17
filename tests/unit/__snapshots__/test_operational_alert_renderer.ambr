@@ -243,12 +243,14 @@
 # ---
 # name: test_operational_alert_matches_snapshot[wallapop_session_expired]
   '''
-  ℹ️ Sesión Wallapop expirada
+  ⚠️ *Sesión Wallapop expirada*
   
   Adapter: wallapop\_api \(devuelve 401\)
-  Fallback: wallapop\_tinyfish activo \(sin alertas perdidas\)
+  Fallback: wallapop\_tinyfish \(de pago; se pausa si falla\)
   
-  Próximo paso: `salvager login wallapop` cuando puedas
+  Próximo paso:
+  1\. `salvager login wallapop` hoy \(o exporta cookies\.txt desde tu navegador\)
+  2\. sin reinicio: el daemon detecta la cookie nueva en el siguiente ciclo
   '''
 # ---
 # name: test_operational_alert_matches_snapshot[wallapop_session_renewed]

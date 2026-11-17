@@ -1149,11 +1149,13 @@ def _body_daemon_stopped(ctx: Mapping[str, Any]) -> list[str]:
 def _body_wallapop_session_expired(_ctx: Mapping[str, Any]) -> list[str]:
     return [
         _prose("Adapter: wallapop_api (devuelve 401)"),
-        _prose("Fallback: wallapop_tinyfish activo (sin alertas perdidas)"),
+        _prose("Fallback: wallapop_tinyfish (de pago; se pausa si falla)"),
         "",
-        _prose(_NEXT_STEP_HEADER + " ")
+        _prose(_NEXT_STEP_HEADER),
+        _prose("1. ")
         + _cmd("salvager login wallapop")
-        + _prose(" cuando puedas"),
+        + _prose(" hoy (o exporta cookies.txt desde tu navegador)"),
+        _prose("2. sin reinicio: el daemon detecta la cookie nueva en el siguiente ciclo"),
     ]
 
 
@@ -1415,7 +1417,7 @@ _OPERATIONAL_EVENT_SPECS: Final[dict[EventName, _OperationalEventSpec]] = {
         "info", "Daemon detenido", _body_daemon_stopped
     ),
     EventName.wallapop_session_expired: _OperationalEventSpec(
-        "info", "Sesión Wallapop expirada", _body_wallapop_session_expired
+        "warn", "Sesión Wallapop expirada", _body_wallapop_session_expired
     ),
     EventName.wallapop_session_renewed: _OperationalEventSpec(
         "info", "Sesión Wallapop renovada", _body_wallapop_session_renewed
