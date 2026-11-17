@@ -12,6 +12,30 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.5.2] — 2026-11-17
+
+**An expired Wallapop session is no longer an outage (#66)**
+
+Wallapop's search (`/api/v3/search/section`) and item detail
+(`/api/v3/items/{id}`) are public: without cookies and without an
+`Authorization` header they answer 200 with the payload salvager already
+parses. The November outage was only the adapter sending a dead session.
+
+- **Anonymous fallback** in the API transport: a 401 that survives the
+  refresh dance is retried anonymously; while the cookie file is
+  unchanged calls go straight to the anonymous request (no 401/refresh
+  churn); a renewed cookie returns to the authenticated path. Logged as
+  `wallapop_anonymous_mode_entered` / `wallapop_anonymous_mode_exited`.
+  Covers search and the Phase 2 / offer reconciliation re-fetch.
+- **⚠️ `wallapop_session_expired`** fires only if the anonymous call is
+  rejected too.
+- **`wallapop.tinyfish_search_daily_limit`** (default **0 = off**): a
+  TinyFish search run costs 4-8 agent steps (0,016 $/step) and the
+  agent search returned zero listings. Phase 2 buy/offer flows are
+  unaffected.
+
+---
+
 ## [0.5.1] — 2026-11-17
 
 **A Wallapop session expiry no longer snowballs (#64)**
