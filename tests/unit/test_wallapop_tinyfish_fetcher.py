@@ -339,6 +339,26 @@ async def test_local_rate_limit_window_slides_forward() -> None:
     assert len(client.agent.calls) == 3
 
 
+async def test_daily_cap_blocks_paid_runs_even_when_they_succeed() -> None:
+    """The 2026-11-17 burn: runs that "succeed" with zero listings still
+    cost credits, so the daily cap counts every run, not just failures."""
+    client = _FakeClient()
+    fetcher = WallapopTinyfishFetcher(
+        _FAKE_KEY,
+        client=cast(AsyncTinyFish, client),
+        rate_limit_per_minute=100,
+        rate_limit_per_day=3,
+    )
+    client.agent.next_response = _make_response(result={"listings": []})
+
+    for _ in range(3):
+        assert await fetcher.search(_query()) == []
+
+    with pytest.raises(TinyFishRateLimited):
+        await fetcher.search(_query())
+    assert len(client.agent.calls) == 3, "the daily cap must short-circuit before the call"
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Side-effects on failure
 # ─────────────────────────────────────────────────────────────────────────

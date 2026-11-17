@@ -162,8 +162,9 @@ class _FakeReporter:
     def __init__(self) -> None:
         self.events: list[EventName] = []
 
-    async def report(self, severity: str, event: EventName, *, ctx: Any = None) -> None:
+    async def report(self, severity: str, event: EventName, *, ctx: Any = None) -> bool:
         self.events.append(event)
+        return True
 
 
 @pytest.fixture

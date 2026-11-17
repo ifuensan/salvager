@@ -79,6 +79,12 @@ from salvager.observability.logging import get_logger
 #: TinyFish Search-API cap per their docs.
 _DEFAULT_RATE_LIMIT_PER_MINUTE: Final[int] = 5
 
+#: Hard daily cap on paid TinyFish search runs. The per-minute cap alone
+#: allowed ~480 runs/day once every query fell back to TinyFish (the
+#: 2026-11-03 session expiry) — and a run that "succeeds" with zero
+#: listings still costs credits, so the failure pause can't bound it.
+_DEFAULT_RATE_LIMIT_PER_DAY: Final[int] = 40
+
 #: Max listings to ask the agent to extract per call.
 _DEFAULT_RESULTS_LIMIT: Final[int] = 30
 
@@ -126,6 +132,8 @@ class WallapopTinyfishFetcher(PageFetcher):
         max_duration_s: int = _DEFAULT_MAX_DURATION_S,
         rate_limit_per_minute: int = _DEFAULT_RATE_LIMIT_PER_MINUTE,
         rate_limiter: SlidingWindowRateLimiter | None = None,
+        rate_limit_per_day: int = _DEFAULT_RATE_LIMIT_PER_DAY,
+        daily_rate_limiter: SlidingWindowRateLimiter | None = None,
     ) -> None:
         """Build the fetcher.
 
@@ -141,6 +149,9 @@ class WallapopTinyfishFetcher(PageFetcher):
             client = AsyncTinyFish(api_key=api_key.get_secret_value())
         self._client = client
         self._rate_limiter = rate_limiter or _default_rate_limiter(rate_limit_per_minute)
+        self._daily_rate_limiter = daily_rate_limiter or SlidingWindowRateLimiter(
+            limit=rate_limit_per_day, window=timedelta(days=1)
+        )
         self._log = get_logger("adapter.wallapop_tinyfish")
 
     async def close(self) -> None:
@@ -189,7 +200,11 @@ class WallapopTinyfishFetcher(PageFetcher):
         except SDKError as exc:
             self._log.error(
                 "wallapop_tinyfish_unavailable",
-                extra={"error_class": exc.__class__.__name__},
+                extra={
+                    "error_class": exc.__class__.__name__,
+                    "status_code": getattr(exc, "status_code", None),
+                    "error": str(exc)[:300],
+                },
             )
             raise TinyFishUnavailable(
                 f"TinyFish call failed: {exc.__class__.__name__}: {exc}"
@@ -198,6 +213,7 @@ class WallapopTinyfishFetcher(PageFetcher):
             # Record the call even on failure — a series of failing calls
             # still counts toward the rate budget at the remote.
             self._rate_limiter.record()
+            self._daily_rate_limiter.record()
 
         if response.status != RunStatus.COMPLETED:
             self._log.error(
@@ -240,6 +256,13 @@ class WallapopTinyfishFetcher(PageFetcher):
     # ─────────────────────────────────────────────────────────────────
 
     def _enforce_rate_limit(self) -> None:
+        if not self._daily_rate_limiter.allow():
+            retry_after = self._daily_rate_limiter.retry_after_seconds()
+            self._log.warning(
+                "wallapop_tinyfish_daily_cap_reached",
+                extra={"retry_after_s": retry_after},
+            )
+            raise TinyFishRateLimited(retry_after_s=retry_after)
         if self._rate_limiter.allow():
             return
         retry_after = self._rate_limiter.retry_after_seconds()

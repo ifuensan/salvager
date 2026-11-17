@@ -85,14 +85,17 @@ class _FakeReporter:
 
     def __init__(self) -> None:
         self.calls: list[tuple[Severity, EventName, dict[str, Any]]] = []
+        #: What ``report()`` answers — False simulates a failed/deduped send.
+        self.delivered = True
 
     async def report(
         self,
         severity: Severity,
         event: EventName,
         ctx: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
         self.calls.append((severity, event, dict(ctx)))
+        return self.delivered
 
     def events(self) -> list[EventName]:
         return [event for _, event, _ in self.calls]
@@ -212,7 +215,7 @@ async def test_session_expired_latches_path_off_and_falls_back() -> None:
 
     assert reporter.events() == [EventName.wallapop_session_expired]
     severity, _, ctx = reporter.calls[0]
-    assert severity == "info"
+    assert severity == "warn"
     assert ctx["adapter"] == SOURCE_API
     assert ctx["fallback_path_status"] == "active"
 
@@ -400,6 +403,143 @@ async def test_success_resets_the_both_paths_down_streak() -> None:
     assert EventName.wallapop_both_paths_down not in reporter.events()
 
 
+async def test_both_paths_down_alerts_once_per_streak() -> None:
+    """The 2026-11-03 storm: one ⚠️ per failing fetch (~2,900/day). A
+    streak now produces exactly one ⚠️, however long it lasts."""
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = TinyFishRateLimited(retry_after_s=50)
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for _ in range(30):
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 1
+
+
+async def test_tinyfish_pauses_after_consecutive_failures() -> None:
+    api = _FakeFetcher()
+    api.search_response = WallapopSessionExpired("401")
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = TinyFishUnavailable("APIStatusError")
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for _ in range(10):
+        listings = await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+        assert listings == []
+
+    # Three paid calls, then the path stays paused — no more spend.
+    assert len(tinyfish.search_calls) == 3
+    assert health.tinyfish_attempt_enabled() is False
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 1
+
+
+async def test_tinyfish_rate_limit_refusals_do_not_pause_the_path() -> None:
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = TinyFishRateLimited(retry_after_s=50)
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for _ in range(10):
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+
+    assert health.tinyfish_attempt_enabled() is True
+    assert len(tinyfish.search_calls) == 10
+
+
+async def test_tinyfish_success_resets_the_pause_streak() -> None:
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for response in (
+        TinyFishUnavailable("x"),
+        TinyFishUnavailable("x"),
+        [_listing("ok")],
+        TinyFishUnavailable("x"),
+        TinyFishUnavailable("x"),
+    ):
+        tinyfish.search_response = response
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+
+    assert health.tinyfish_attempt_enabled() is True
+
+
+async def test_undelivered_both_down_alert_is_retried_until_it_lands() -> None:
+    """A Telegram outage (or a dedup against the previous streak) at the
+    threshold must not leave the whole streak silent."""
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = TinyFishRateLimited(retry_after_s=50)
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    reporter.delivered = False
+    for _ in range(4):
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+    # Failures 2, 3 and 4 each tried — none delivered.
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 3
+
+    reporter.delivered = True
+    for _ in range(5):
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+    # Failure 5 delivers; 6-9 stay quiet.
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 4
+
+
+async def test_new_streak_after_recovery_alerts_again() -> None:
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for response in (
+        TinyFishRateLimited(retry_after_s=1),
+        TinyFishRateLimited(retry_after_s=1),
+        [_listing("ok")],
+        TinyFishRateLimited(retry_after_s=1),
+        TinyFishRateLimited(retry_after_s=1),
+    ):
+        tinyfish.search_response = response
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 2
+
+
+def test_operator_renewal_unpauses_tinyfish() -> None:
+    health = WallapopHealth()
+    for _ in range(3):
+        health.record_tinyfish_failure()
+    assert health.tinyfish_attempt_enabled() is False
+
+    health.mark_api_session_renewed_by_operator()
+
+    assert health.tinyfish_attempt_enabled() is True
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # WallapopHealth state machine
 # ─────────────────────────────────────────────────────────────────────────
@@ -482,6 +622,68 @@ async def test_fallback_fetcher_redetects_refreshed_cookie(tmp_path: Path) -> No
     assert fetcher.health.api_attempt_enabled() is True
     assert EventName.wallapop_session_expired in reporter.events()
     assert EventName.wallapop_session_renewed in reporter.events()
+
+
+async def test_cookie_renewed_during_the_expiry_cycle_is_still_detected(tmp_path: Path) -> None:
+    """The operator renews the cookie while the 401 cycle's TinyFish call
+    is still running: the renewed file must not become the expired baseline."""
+    cookies_path = tmp_path / "wallapop_cookies.txt"
+    _write_cookie(cookies_path, mtime=1_000_000.0)
+
+    class _RenewingTinyfish(_FakeFetcher):
+        async def search(self, query: SearchQuery) -> list[Listing]:
+            _write_cookie(cookies_path, mtime=2_000_000.0)
+            return await super().search(query)
+
+    api = _FakeFetcher()
+    api.search_response = WallapopSessionExpired("401")
+    tinyfish = _RenewingTinyfish()
+    tinyfish.search_response = [_listing("t1")]
+    fetcher = WallapopFallbackFetcher(
+        api_fetcher=api,
+        tinyfish_fetcher=tinyfish,
+        reporter=_FakeReporter(),
+        cookies_path=cookies_path,
+    )
+
+    await fetcher.search(_query())
+    assert fetcher.health.api_attempt_enabled() is False
+
+    api.search_response = [_listing("renewed")]
+    listings = await fetcher.search(_query())
+
+    assert [listing.listing_id for listing in listings] == ["renewed"]
+    assert fetcher.health.api_attempt_enabled() is True
+
+
+async def test_second_renewal_is_detected_after_a_rejected_first_renewal(tmp_path: Path) -> None:
+    cookies_path = tmp_path / "wallapop_cookies.txt"
+    _write_cookie(cookies_path, mtime=1_000_000.0)
+    api = _FakeFetcher()
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = [_listing("t")]
+    fetcher = WallapopFallbackFetcher(
+        api_fetcher=api,
+        tinyfish_fetcher=tinyfish,
+        reporter=_FakeReporter(),
+        cookies_path=cookies_path,
+    )
+
+    # Cookie A expires.
+    api.search_response = WallapopSessionExpired("401")
+    await fetcher.search(_query())
+    # Cookie B is written — and rejected too.
+    _write_cookie(cookies_path, mtime=2_000_000.0)
+    await fetcher.search(_query())
+    assert fetcher.health.api_attempt_enabled() is False
+
+    # Cookie C is written and works.
+    _write_cookie(cookies_path, mtime=3_000_000.0)
+    api.search_response = [_listing("renewed")]
+    listings = await fetcher.search(_query())
+
+    assert [listing.listing_id for listing in listings] == ["renewed"]
+    assert fetcher.health.api_attempt_enabled() is True
 
 
 async def test_fallback_fetcher_does_not_redetect_unchanged_cookie(tmp_path: Path) -> None:
