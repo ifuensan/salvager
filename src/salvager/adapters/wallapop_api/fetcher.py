@@ -463,6 +463,9 @@ class _RefreshingSession:
         # calls don't fire two federated-session refreshes in parallel
         # and clobber each other's rotated cookies.
         self._refresh_lock = asyncio.Lock()
+        #: True while the session is expired and calls are being served
+        #: anonymously — only used to log the transitions once.
+        self._anonymous_mode = False
         self._log = get_logger("adapter.wallapop_api")
 
     def _ensure_cookies_loaded(self) -> dict[str, str]:
@@ -495,9 +498,22 @@ class _RefreshingSession:
         return current > self._cookie_file_mtime
 
     async def call(self, path: str, params: dict[str, str]) -> WallapopResponse:
+        if self._anonymous_mode and not self._disk_is_newer():
+            # The session is known dead and the operator hasn't renewed the
+            # cookie: skip the 401 + refresh round-trips (and the load on
+            # Wallapop's auth endpoint) and go straight to the public call.
+            anonymous = await self._do_request(path, params, {}, anonymous=True)
+            if anonymous.status_code != 401:
+                return anonymous
         cookies = self._ensure_cookies_loaded()
         response = await self._do_request(path, params, cookies)
         if response.status_code != 401:
+            if self._anonymous_mode:
+                self._anonymous_mode = False
+                self._log.info(
+                    "wallapop_anonymous_mode_exited",
+                    extra={"marketplace": "wallapop"},
+                )
             return response
 
         # 401 → refresh dance → retry once. Serialize through the lock
@@ -512,19 +528,55 @@ class _RefreshingSession:
             if retry_response.status_code != 401:
                 return retry_response
             refreshed = await self._refresh_session()
-            if not refreshed:
-                return response
-            return await self._do_request(path, params, self._cookies or {})
+            if refreshed:
+                refreshed_response = await self._do_request(path, params, self._cookies or {})
+                if refreshed_response.status_code != 401:
+                    return refreshed_response
+            return await self._call_anonymously(path, params, response)
+
+    async def _call_anonymously(
+        self,
+        path: str,
+        params: dict[str, str],
+        expired_response: WallapopResponse,
+    ) -> WallapopResponse:
+        """Serve the call without a session once the session is dead.
+
+        Search (``/api/v3/search/section``) and item detail
+        (``/api/v3/items/{id}``) are public: without cookies and without
+        an ``Authorization`` header they answer 200 with the same payload
+        shape (verified 2026-11-17). An expired session therefore no
+        longer takes Wallapop down — before v0.5.2 it fell through to the
+        paid TinyFish path for two weeks. If the anonymous call is
+        rejected too, the original 401 propagates and the operator is
+        told to renew the cookie.
+        """
+        anonymous = await self._do_request(path, params, {}, anonymous=True)
+        if anonymous.status_code == 401:
+            return expired_response
+        if not self._anonymous_mode:
+            self._anonymous_mode = True
+            self._log.warning(
+                "wallapop_anonymous_mode_entered",
+                extra={"marketplace": "wallapop", "reason": "session_expired"},
+            )
+        return anonymous
 
     async def _do_request(
         self,
         path: str,
         params: dict[str, str],
         cookies: dict[str, str],
+        *,
+        anonymous: bool = False,
     ) -> WallapopResponse:
         from curl_cffi import requests as curl_requests
 
         headers = _build_request_headers(cookies)
+        if anonymous:
+            # An empty "Bearer " is itself a 401 — the anonymous call
+            # must not send the header at all.
+            headers.pop("Authorization")
         async with curl_requests.AsyncSession(impersonate="chrome131") as session:
             response = await session.get(
                 f"{self._base_url}{path}",

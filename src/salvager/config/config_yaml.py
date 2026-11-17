@@ -102,6 +102,12 @@ class WallapopConfig(BaseModel):
 
     latitude: Annotated[float, Field(ge=-90.0, le=90.0)] = 40.4168
     longitude: Annotated[float, Field(ge=-180.0, le=180.0)] = -3.7038
+    #: Paid TinyFish runs per rolling 24 h for the search fallback.
+    #: ``0`` (default) disables the TinyFish search path entirely — the
+    #: API path serves search anonymously when the session expires, and a
+    #: TinyFish search run costs 4-8 agent steps (~0,06-0,13 $). Phase 2
+    #: buy/offer flows are unaffected by this knob.
+    tinyfish_search_daily_limit: Annotated[int, Field(ge=0)] = 0
 
 
 class PricingConfig(BaseModel):

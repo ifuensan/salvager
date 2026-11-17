@@ -169,7 +169,7 @@ async def wallapop_two_path_fetch(
     query: SearchQuery,
     *,
     api_fetcher: PageFetcher,
-    tinyfish_fetcher: PageFetcher,
+    tinyfish_fetcher: PageFetcher | None,
     health: WallapopHealth,
     reporter: Reporter,
 ) -> list[Listing]:
@@ -221,6 +221,12 @@ async def wallapop_two_path_fetch(
                 extra={"source": SOURCE_API, "result_count": len(results)},
             )
             return results
+
+    if tinyfish_fetcher is None:
+        # TinyFish search disabled by config (the v0.5.2 default): the API
+        # path already retried anonymously, so there is nothing left to try.
+        await _record_both_paths_down(health, reporter, "TinyFishDisabled")
+        return []
 
     if not health.tinyfish_attempt_enabled():
         await _record_both_paths_down(health, reporter, "TinyFishPaused")
@@ -302,7 +308,7 @@ class WallapopFallbackFetcher(PageFetcher):
         self,
         *,
         api_fetcher: PageFetcher,
-        tinyfish_fetcher: PageFetcher,
+        tinyfish_fetcher: PageFetcher | None,
         reporter: Reporter,
         cookies_path: str | Path | None = None,
         health: WallapopHealth | None = None,

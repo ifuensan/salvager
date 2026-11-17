@@ -245,8 +245,8 @@
   '''
   ⚠️ *Sesión Wallapop expirada*
   
-  Adapter: wallapop\_api \(devuelve 401\)
-  Fallback: wallapop\_tinyfish \(de pago; se pausa si falla\)
+  Adapter: wallapop\_api \(401, también sin sesión\)
+  Fallback: TinyFish solo si wallapop\.tinyfish\_search\_daily\_limit \> 0
   
   Próximo paso:
   1\. `salvager login wallapop` hoy, o exporta cookies\.txt a auth/wallapop\_cookies\.txt en tu data\_dir

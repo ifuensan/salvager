@@ -529,6 +529,24 @@ async def test_new_streak_after_recovery_alerts_again() -> None:
     assert reporter.events().count(EventName.wallapop_both_paths_down) == 2
 
 
+async def test_disabled_tinyfish_search_alerts_once_and_never_raises() -> None:
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for _ in range(5):
+        listings = await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=None, health=health, reporter=reporter
+        )
+        assert listings == []
+
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 1
+    assert reporter.ctx_for(EventName.wallapop_both_paths_down)["last_error_class"] == (
+        "TinyFishDisabled"
+    )
+
+
 def test_operator_renewal_unpauses_tinyfish() -> None:
     health = WallapopHealth()
     for _ in range(3):
