@@ -12,6 +12,39 @@ Nothing on the wire today. Post-v1 work is described in
 
 ---
 
+## [0.5.1] — 2026-11-17
+
+**A Wallapop session expiry no longer snowballs (#64)**
+
+On 2026-11-03 the Wallapop session cookie expired. The API path latched
+off as designed, but every query then fell back to a failing TinyFish
+(~475 paid calls/day for two weeks), `wallapop_both_paths_down` fired on
+every failing fetch (~2,945 Telegram ⚠️/day — the running counter in the
+ctx also defeated the reporter's dedup), and the one alert that mattered
+was an `info` buried under the storm. On 2026-11-17, 92 zero-listing
+TinyFish runs drained the credits.
+
+- **One ⚠️ per failure streak** — retried until Telegram actually
+  delivers it (`Reporter.report` now returns delivery), reset on recovery.
+- **Dedup ignores running counters** (`consecutive_failures`).
+- **TinyFish search pauses** after 3 consecutive failures that reached
+  the network, until a cookie renewal or restart; rate-limit refusals
+  don't count.
+- **Daily cap of 40 TinyFish search runs**, successes included — a
+  zero-listing run still costs credits.
+- **`wallapop_session_expired` is a ⚠️ warn** with numbered steps,
+  including exporting `cookies.txt` from a normal browser (Google blocks
+  sign-in from Playwright's Chromium).
+- Cookie renewal is detected even if it lands mid-cycle or after a
+  rejected first renewal.
+- `wallapop_tinyfish_unavailable` logs the HTTP status + message.
+- README: "Renewing the Wallapop session" runbook (`cp`, not `mv`, to
+  keep the `:Z` SELinux label).
+
+Phase 2 buy/offer TinyFish flows are unchanged.
+
+---
+
 ## [0.5.0] — 2026-07-23
 
 **Wallapop "hacer oferta": operator-tapped offers + the negotiable band (#55)**

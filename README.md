@@ -10,7 +10,7 @@ A self-hosted personal agent for monitoring second-hand homelab parts. Watches y
 **Wishlist focus:** HDDs (NAS-grade and enterprise) and DDR4 RAM. Extensible to other part types.
 **Distribution:** single Docker image, single docker-compose service.
 
-> **Status (July 2026): `v0.5.0` — Phase 1 + Phase 2 feature-complete preview, Phase 2 wired live.** All Epic 2–5 code shipped in v0.2.0; v0.2.1–v0.2.2 patched the Docker image; v0.2.3 stabilised the Wallapop adapter against the SPA's current production traffic (v3 `/search/section` endpoint, browser-TLS impersonation via `curl_cffi`, transparent JWT refresh, reserved-listing routing); v0.3.0 wired the Phase 2 autonomous-purchase loop end-to-end (BuyOrchestrator composed with all collaborators, marketplace-dispatched checkout), the Telegram callback listener, an in-cycle reserved-comp line on alerts, and a pretty-log toggle; v0.3.1 adds the clickable deep link to the listing on every alert (FR18); v0.3.2 ships the price-parser smoke-test in the image and runs it (startup + daily) so Phase 2 is actually armable in production; v0.3.3 makes every price ceiling shipping-aware — alert and buy gates plus receipt reconciliation compare the delivered buyer total (item + shipping + Wallapop's Protección fee), and alerts show the breakdown; v0.3.4 extends that total with an estimated flat import-charges buffer for eBay listings located outside the EU (`pricing.assumed_import_charges_eur`, default 3,63 €); v0.3.5 moves LLM evaluation to `gemini-2.5-flash` (Google retired 2.0-flash) and clips over-long takes instead of discarding valid verdicts; v0.4.0 adds live-updating alerts — dispatched alerts are watched (`alerts.watch_days`) and the original Telegram message edits itself on reserved flips and price drops, with a ping for big drops; v0.4.1 classifies a pre-buy 404 as `listing_gone` (fail-closed, no circuit hit); v0.4.2 reconciles by internal listing id after Wallapop dropped slug support; v0.4.3 restores the alert keyboard after every buy outcome; v0.4.4 is a tooling-only release carrying the passed rendering re-audit and the extended `dev emit-alert` catalog; v0.5.0 adds the operator-tapped Wallapop "hacer oferta" flow — a 💰 Ofertar button behind the same safety stack as Comprar, plus negotiable-band alerts for listings just over the ceiling (opt-in per entry via `salvager offer enable`). The daemon polls Wallapop + eBay.es, evaluates listings against the wishlist via Gemini Flash or Claude Haiku, dispatches Telegram alerts, and the Phase 2 autonomous-purchase loop runs behind the safety stack and the non-bypassable Telegram tap. **Not yet validated in production**: the operator's burn-in window is in progress; v1.0 promotion is gated on at least 2 weeks of continuous live-traffic operation + one completed Phase 2 purchase. Recommended pinned tag: `ghcr.io/ifuensan/salvager:0.5.0`. See [CHANGELOG.md](CHANGELOG.md) for release notes and [ROADMAP.md](ROADMAP.md) for the v1.0 path.
+> **Status (November 2026): `v0.5.1` — Phase 1 + Phase 2 feature-complete preview, Phase 2 wired live.** All Epic 2–5 code shipped in v0.2.0; v0.2.1–v0.2.2 patched the Docker image; v0.2.3 stabilised the Wallapop adapter against the SPA's current production traffic (v3 `/search/section` endpoint, browser-TLS impersonation via `curl_cffi`, transparent JWT refresh, reserved-listing routing); v0.3.0 wired the Phase 2 autonomous-purchase loop end-to-end (BuyOrchestrator composed with all collaborators, marketplace-dispatched checkout), the Telegram callback listener, an in-cycle reserved-comp line on alerts, and a pretty-log toggle; v0.3.1 adds the clickable deep link to the listing on every alert (FR18); v0.3.2 ships the price-parser smoke-test in the image and runs it (startup + daily) so Phase 2 is actually armable in production; v0.3.3 makes every price ceiling shipping-aware — alert and buy gates plus receipt reconciliation compare the delivered buyer total (item + shipping + Wallapop's Protección fee), and alerts show the breakdown; v0.3.4 extends that total with an estimated flat import-charges buffer for eBay listings located outside the EU (`pricing.assumed_import_charges_eur`, default 3,63 €); v0.3.5 moves LLM evaluation to `gemini-2.5-flash` (Google retired 2.0-flash) and clips over-long takes instead of discarding valid verdicts; v0.4.0 adds live-updating alerts — dispatched alerts are watched (`alerts.watch_days`) and the original Telegram message edits itself on reserved flips and price drops, with a ping for big drops; v0.4.1 classifies a pre-buy 404 as `listing_gone` (fail-closed, no circuit hit); v0.4.2 reconciles by internal listing id after Wallapop dropped slug support; v0.4.3 restores the alert keyboard after every buy outcome; v0.4.4 is a tooling-only release carrying the passed rendering re-audit and the extended `dev emit-alert` catalog; v0.5.0 adds the operator-tapped Wallapop "hacer oferta" flow — a 💰 Ofertar button behind the same safety stack as Comprar, plus negotiable-band alerts for listings just over the ceiling (opt-in per entry via `salvager offer enable`); v0.5.1 stops a Wallapop session expiry from snowballing — one ⚠️ per failure streak, a paused + daily-capped TinyFish fallback, and a ⚠️ session-expired alert with the renewal steps. The daemon polls Wallapop + eBay.es, evaluates listings against the wishlist via Gemini Flash or Claude Haiku, dispatches Telegram alerts, and the Phase 2 autonomous-purchase loop runs behind the safety stack and the non-bypassable Telegram tap. **Not yet validated in production**: the operator's burn-in window is in progress; v1.0 promotion is gated on at least 2 weeks of continuous live-traffic operation + one completed Phase 2 purchase. Recommended pinned tag: `ghcr.io/ifuensan/salvager:0.5.1`. See [CHANGELOG.md](CHANGELOG.md) for release notes and [ROADMAP.md](ROADMAP.md) for the v1.0 path.
 
 ---
 
@@ -26,7 +26,7 @@ A self-hosted personal agent for monitoring second-hand homelab parts. Watches y
 
 Prerequisites: Docker + docker-compose, a Telegram bot, a Google Gemini API key, an eBay developer account, a TinyFish API key (for the Phase 1 Wallapop fallback path and the Phase 2 buy flows), and a Wallapop / eBay.es account dedicated to the agent (see Legal disclaimer below).
 
-The recommended image tag for new deployments is `ghcr.io/ifuensan/salvager:0.5.0` (pinned). `:latest` follows the newest release; pin to `:0.5.0` for reproducible deploys during the v1.0 burn-in window.
+The recommended image tag for new deployments is `ghcr.io/ifuensan/salvager:0.5.1` (pinned). `:latest` follows the newest release; pin to `:0.5.1` for reproducible deploys during the v1.0 burn-in window.
 
 ```bash
 git clone https://github.com/ifuensan/salvager
@@ -100,6 +100,26 @@ src/salvager/
 The adapter discipline boundary (NFR-M1, launch-blocker) is enforced by a custom AST-based CI lint at [`scripts/adapter_discipline_lint.py`](scripts/adapter_discipline_lint.py).
 
 Scheduler runs in-process (asyncio-based, `adapters/asyncio_scheduler/`). TinyFish is reached directly via the official SDK from `adapters/wallapop_tinyfish/` (Phase 1 fallback when the unofficial Wallapop API path fails) and `adapters/tinyfish_browser/` (Phase 2 buy flows for Wallapop Pay + eBay.es checkout). No remote agent-orchestration service is required.
+
+---
+
+## Renewing the Wallapop session
+
+The Wallapop session cookie lasts ~30 days (`__Secure-next-auth.session-token`). When it expires the daemon sends a ⚠️ **Sesión Wallapop expirada** alert, pauses the paid TinyFish fallback after 3 failures, and keeps eBay.es running. Renew it and the daemon picks the new cookie up on the next poll cycle — no restart.
+
+`salvager login wallapop` opens Playwright's Chromium, and **Google refuses to sign in from an automated browser** — if your Wallapop account uses "Continuar con Google", export the cookie from your normal browser instead:
+
+1. Sign in at `https://es.wallapop.com` in your everyday Chrome.
+2. Export the site's cookies in Netscape format with the open-source **Get cookies.txt LOCALLY** extension (not the delisted "Get cookies.txt").
+3. Copy it over the existing file — `cp`, not `mv`, so the file keeps the container's SELinux label (with `:Z` volumes a moved file stays `user_home_t` and the container can't read it):
+
+```bash
+cp ~/Downloads/es.wallapop.com_cookies.txt <data_dir>/auth/wallapop_cookies.txt
+chmod 600 <data_dir>/auth/wallapop_cookies.txt
+grep -cE "accessToken|session-token" <data_dir>/auth/wallapop_cookies.txt   # 2
+```
+
+The log line `wallapop_cookie_refresh_detected` followed by `wallapop_session_renewed` confirms the recovery.
 
 ---
 
