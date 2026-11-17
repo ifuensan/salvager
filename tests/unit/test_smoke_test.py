@@ -67,8 +67,9 @@ class _RecordingReporter(Reporter):
         severity: str,
         event: EventName,
         ctx: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
         self.calls.append((severity, event, dict(ctx)))
+        return True
 
 
 @pytest.fixture

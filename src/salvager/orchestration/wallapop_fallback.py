@@ -96,6 +96,7 @@ class WallapopHealth:
         self._api_attempt_enabled = True
         self._pending_renewal_confirmation = False
         self._consecutive_both_down = 0
+        self._both_down_alert_delivered = False
         self._consecutive_tinyfish_failures = 0
 
     def api_attempt_enabled(self) -> bool:
@@ -136,6 +137,14 @@ class WallapopHealth:
     def reset_failure_streak(self) -> None:
         """Clear the both-paths-down streak — called after any successful fetch."""
         self._consecutive_both_down = 0
+        self._both_down_alert_delivered = False
+
+    def both_down_alert_delivered(self) -> bool:
+        """``True`` once the current streak's ⚠️ actually reached Telegram."""
+        return self._both_down_alert_delivered
+
+    def mark_both_down_alert_delivered(self) -> None:
+        self._both_down_alert_delivered = True
 
     def tinyfish_attempt_enabled(self) -> bool:
         """``False`` once TinyFish has failed :data:`_TINYFISH_PAUSE_THRESHOLD` times in a row."""
@@ -250,19 +259,25 @@ async def _record_both_paths_down(
     reporter: Reporter,
     last_error_class: str,
 ) -> None:
-    """Advance the both-paths-down streak; ⚠️ exactly once per streak."""
+    """Advance the both-paths-down streak; ⚠️ once per streak, retried until delivered.
+
+    A streak is "alerted" only once the reporter confirms Telegram
+    delivery: a failed send, or a dedup against a previous streak's ⚠️,
+    leaves it un-alerted and the next failure of the streak tries again.
+    """
     count = health.record_both_paths_down()
     ctx = {
         "consecutive_failures": count,
         "last_error_class": last_error_class,
         "api_attempt_enabled": health.api_attempt_enabled(),
     }
-    if count == _BOTH_DOWN_ALERT_THRESHOLD:
-        await reporter.report("warn", EventName.wallapop_both_paths_down, ctx)
+    if count >= _BOTH_DOWN_ALERT_THRESHOLD and not health.both_down_alert_delivered():
+        if await reporter.report("warn", EventName.wallapop_both_paths_down, ctx):
+            health.mark_both_down_alert_delivered()
     else:
         # First blip, or a streak already alerted on: log line only — a
-        # single transient failure is not worth a ⚠️, and one ⚠️ per
-        # streak is enough to get the operator's attention.
+        # single transient failure is not worth a ⚠️, and one delivered
+        # ⚠️ per streak is enough to get the operator's attention.
         get_logger("orchestration.wallapop_fallback").warning("wallapop_both_paths_down", extra=ctx)
 
 

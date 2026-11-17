@@ -85,14 +85,17 @@ class _FakeReporter:
 
     def __init__(self) -> None:
         self.calls: list[tuple[Severity, EventName, dict[str, Any]]] = []
+        #: What ``report()`` answers — False simulates a failed/deduped send.
+        self.delivered = True
 
     async def report(
         self,
         severity: Severity,
         event: EventName,
         ctx: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
         self.calls.append((severity, event, dict(ctx)))
+        return self.delivered
 
     def events(self) -> list[EventName]:
         return [event for _, event, _ in self.calls]
@@ -475,6 +478,55 @@ async def test_tinyfish_success_resets_the_pause_streak() -> None:
         )
 
     assert health.tinyfish_attempt_enabled() is True
+
+
+async def test_undelivered_both_down_alert_is_retried_until_it_lands() -> None:
+    """A Telegram outage (or a dedup against the previous streak) at the
+    threshold must not leave the whole streak silent."""
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    tinyfish.search_response = TinyFishRateLimited(retry_after_s=50)
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    reporter.delivered = False
+    for _ in range(4):
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+    # Failures 2, 3 and 4 each tried — none delivered.
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 3
+
+    reporter.delivered = True
+    for _ in range(5):
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+    # Failure 5 delivers; 6-9 stay quiet.
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 4
+
+
+async def test_new_streak_after_recovery_alerts_again() -> None:
+    api = _FakeFetcher()
+    api.search_response = WallapopApiError(503, "down")
+    tinyfish = _FakeFetcher()
+    health = WallapopHealth()
+    reporter = _FakeReporter()
+
+    for response in (
+        TinyFishRateLimited(retry_after_s=1),
+        TinyFishRateLimited(retry_after_s=1),
+        [_listing("ok")],
+        TinyFishRateLimited(retry_after_s=1),
+        TinyFishRateLimited(retry_after_s=1),
+    ):
+        tinyfish.search_response = response
+        await wallapop_two_path_fetch(
+            _query(), api_fetcher=api, tinyfish_fetcher=tinyfish, health=health, reporter=reporter
+        )
+
+    assert reporter.events().count(EventName.wallapop_both_paths_down) == 2
 
 
 def test_operator_renewal_unpauses_tinyfish() -> None:

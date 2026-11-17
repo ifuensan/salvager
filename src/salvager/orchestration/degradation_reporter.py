@@ -71,7 +71,9 @@ class Reporter(Protocol):
         severity: Severity,
         event: EventName,
         ctx: Mapping[str, Any],
-    ) -> None: ...
+    ) -> bool:
+        """Fan out one degradation; ``True`` iff a Telegram alert was delivered."""
+        ...
 
 
 def _utc_now() -> datetime:
@@ -118,12 +120,16 @@ class DegradationReporter:
         severity: Severity,
         event: EventName,
         ctx: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
         """Fan one degradation out to log + health state + Telegram.
 
         Never raises: a broken Telegram surface is logged and swallowed
         so the log + health-state sinks still land. The method is the
         single chokepoint for operational Telegram alerts.
+
+        Returns ``True`` iff the Telegram alert was actually delivered —
+        ``False`` when it was deduped or the send failed — so a caller
+        that alerts once per condition can retry until it lands.
         """
         now = self._clock()
 
@@ -145,7 +151,7 @@ class DegradationReporter:
                     "dedup_window_seconds": self._dedup_window_seconds,
                 },
             )
-            return
+            return False
 
         rendered = render_operational_alert(severity, event, ctx)
         try:
@@ -161,11 +167,12 @@ class DegradationReporter:
                     "error_class": exc.__class__.__name__,
                 },
             )
-            return
+            return False
 
         # Only a delivered alert arms the dedup window — a failed send
         # must not suppress the next attempt.
         self._last_telegram_at[(event, _ctx_fingerprint(ctx))] = now
+        return True
 
     def _is_deduped(
         self,

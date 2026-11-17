@@ -188,8 +188,9 @@ class FakeTelegram(TelegramSurface):
 class FakeReporter:
     reports: list[tuple[str, EventName, dict[str, Any]]] = field(default_factory=list)
 
-    async def report(self, severity: str, event: EventName, ctx: Any) -> None:
+    async def report(self, severity: str, event: EventName, ctx: Any) -> bool:
         self.reports.append((severity, event, dict(ctx)))
+        return True
 
 
 @dataclass
@@ -754,7 +755,7 @@ async def test_catch_all_swallows_secondary_reporter_and_circuit_failures(
     wired.cross_source.next_listing = _listing(price_eur=Decimal("55.00"))
     wired.browser.next_exception = RuntimeError("primary failure")
 
-    async def _report_boom(*_a: Any, **_kw: Any) -> None:
+    async def _report_boom(*_a: Any, **_kw: Any) -> bool:
         raise RuntimeError("reporter offline")
 
     async def _record_boom(*_a: Any, **_kw: Any) -> Any:
