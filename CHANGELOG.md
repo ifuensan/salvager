@@ -7,7 +7,14 @@ NFR-M4.
 
 ## [Unreleased]
 
-**Per-run step budget on the TinyFish buy and offer flows**
+Nothing on the wire today. Post-v1 work is described in
+[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
+
+---
+
+## [0.5.3] — 2026-11-18
+
+**Per-run step budget on the TinyFish buy and offer flows (#68)**
 
 TinyFish bills per agent step ($0.016) and an unbounded run may take up
 to 150. The flows also called the synchronous `/v1/automation/run`
