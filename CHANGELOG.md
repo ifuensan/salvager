@@ -7,8 +7,29 @@ NFR-M4.
 
 ## [Unreleased]
 
-Nothing on the wire today. Post-v1 work is described in
-[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
+**Per-run step budget on the TinyFish buy and offer flows**
+
+TinyFish bills per agent step ($0.016) and an unbounded run may take up
+to 150. The flows also called the synchronous `/v1/automation/run`
+endpoint, which cannot be cancelled: the 120 s client-side timeout only
+stopped *waiting* while the remote run kept stepping and billing.
+
+- The buy and offer flows now run over the SSE endpoint, count one
+  `PROGRESS` event per step and request cancellation
+  (`POST /v1/runs/{id}/cancel`) once a run passes **60 steps per buy** /
+  **40 per offer**, when the wall-clock budget runs out, or when the
+  stream drops before `COMPLETE`. These are cancellation thresholds, not
+  a guaranteed cost ceiling: a step taken while the cancel is in flight,
+  or a cancel that fails, can still be billed. A cut-off surfaces as the
+  existing `timeout` failure, with `max_steps` / `budget_s` in the audit
+  ctx; the ctx says "run cancelled" only when TinyFish confirms
+  `CANCELLED`.
+- Every completed run logs `tinyfish_agent_steps` — the observed event
+  count, to be checked against TinyFish's billed steps on the first
+  real buy before it counts as the v1.0 criterion 4 (OQ3) measurement.
+- A cancel that fails or finds the run already finished is logged
+  (`tinyfish_cancel_failed` / `tinyfish_cancel_run_already_terminal`)
+  and never changes the failure returned to the operator.
 
 ---
 

@@ -29,7 +29,6 @@ verified send with a failed capture returns success with
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from decimal import Decimal
@@ -48,7 +47,9 @@ from tinyfish import (
 
 from salvager.adapters.tinyfish_browser._runtime import (
     DEFAULT_MAX_DURATION_S,
+    StepBudgetExceededError,
     build_client,
+    run_agent_bounded,
 )
 from salvager.domain.errors import OfferFailureReason
 from salvager.domain.listing import Listing
@@ -59,6 +60,12 @@ from salvager.interfaces.offer_session import (
     OfferSuccess,
 )
 from salvager.observability.logging import get_logger
+
+#: Step budget per offer. The form is shorter than a checkout (open,
+#: tap, type, submit, verify, capture), so it gets a tighter cap than
+#: the buy budget (``_runtime.DEFAULT_MAX_STEPS``): cancellation is requested
+#: past ~0.64 USD of steps.
+DEFAULT_MAX_OFFER_STEPS: Final[int] = 40
 
 #: The structured-output contract the offer agent MUST honour.
 OFFER_OUTPUT_CONTRACT: Final[str] = (
@@ -189,12 +196,14 @@ class WallapopOfferFlow(OfferSession):
         *,
         client: AsyncTinyFish | None = None,
         max_duration_s: int = DEFAULT_MAX_DURATION_S,
+        max_steps: int = DEFAULT_MAX_OFFER_STEPS,
     ) -> None:
         self._owned_client = client is None
         if client is None:
             client = build_client(api_key)
         self._client = client
         self._max_duration_s = max_duration_s
+        self._max_steps = max_steps
         self._log = get_logger("adapter.tinyfish_browser.wallapop_offer")
 
     async def close(self) -> None:
@@ -221,6 +230,7 @@ class WallapopOfferFlow(OfferSession):
             url=str(listing.url),
             amount_eur=amount_eur,
             max_duration_s=self._max_duration_s,
+            max_steps=self._max_steps,
             log=self._log,
         )
 
@@ -232,6 +242,7 @@ async def _execute_offer_via_tinyfish(
     url: str,
     amount_eur: Decimal,
     max_duration_s: int,
+    max_steps: int,
     log: logging.Logger,
 ) -> OfferResult:
     """Drive one offer through the TinyFish agent. Never raises — every
@@ -239,9 +250,27 @@ async def _execute_offer_via_tinyfish(
     started = time.perf_counter()
 
     try:
-        response = await asyncio.wait_for(
-            client.agent.run(goal=goal, url=url),
-            timeout=max_duration_s,
+        response = await run_agent_bounded(
+            client,
+            goal=goal,
+            url=url,
+            max_steps=max_steps,
+            max_duration_s=max_duration_s,
+            log=log,
+        )
+    except StepBudgetExceededError as exc:
+        log.warning(
+            "tinyfish_offer_step_budget_exceeded",
+            extra={"url": url, "run_id": exc.run_id, "max_steps": exc.max_steps},
+        )
+        return OfferSendFailure(
+            reason=OfferFailureReason.timeout,
+            ctx={
+                "max_steps": exc.max_steps,
+                "run_id": exc.run_id,
+                "url": url,
+                "detail": exc.detail,
+            },
         )
     except TimeoutError:
         log.warning("tinyfish_offer_timeout", extra={"url": url, "budget_s": max_duration_s})
@@ -389,4 +418,10 @@ def _coerce_amount(raw: str | None) -> Decimal | None:
     return value
 
 
-__all__ = ["OFFER_OUTPUT_CONTRACT", "OfferAgentResponse", "WallapopOfferFlow", "render_offer_goal"]
+__all__ = [
+    "DEFAULT_MAX_OFFER_STEPS",
+    "OFFER_OUTPUT_CONTRACT",
+    "OfferAgentResponse",
+    "WallapopOfferFlow",
+    "render_offer_goal",
+]

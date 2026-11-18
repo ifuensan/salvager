@@ -1,7 +1,7 @@
 """Tests for the Phase 2 buy flows — Story 5.3.
 
 The TinyFish SDK is mocked at the constructor seam: a fake async
-client records every ``agent.run`` call and returns a preloaded
+client records every ``agent.stream`` call and returns a preloaded
 :class:`AgentRunResponse` (or raises a preloaded exception). No
 network, no real API key.
 
@@ -20,6 +20,8 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -30,16 +32,20 @@ from pydantic import SecretStr
 from tinyfish import (
     AgentRunResponse,
     AuthenticationError,
+    EventType,
     PermissionDeniedError,
     RateLimitError,
     RunStatus,
     SDKError,
+    StartedEvent,
 )
+from tinyfish_stream_fakes import FakeClient as _FakeClient
 
 from salvager.adapters.tinyfish_browser import (
     EbayCheckoutFlow,
     WallapopPayFlow,
 )
+from salvager.adapters.tinyfish_browser._runtime import DEFAULT_MAX_STEPS
 from salvager.domain.errors import BuyFailureReason
 from salvager.domain.listing import Listing
 from salvager.interfaces.browser_session import (
@@ -65,29 +71,6 @@ def _fake_http_response(status_code: int) -> httpx.Response:
     )
 
 
-class _FakeAgent:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self.next_response: AgentRunResponse | None = None
-        self.next_exception: BaseException | None = None
-
-    async def run(self, *, goal: str, url: str, **kwargs: Any) -> AgentRunResponse:
-        self.calls.append({"goal": goal, "url": url, **kwargs})
-        if self.next_exception is not None:
-            raise self.next_exception
-        assert self.next_response is not None, "test forgot to preload a response"
-        return self.next_response
-
-
-class _FakeClient:
-    def __init__(self) -> None:
-        self.agent = _FakeAgent()
-        self.closed = False
-
-    async def close(self) -> None:
-        self.closed = True
-
-
 def _make_response(
     *,
     status: RunStatus = RunStatus.COMPLETED,
@@ -104,6 +87,15 @@ def _make_response(
         started_at=_FIXED_TS,
         finished_at=_FIXED_TS,
     )
+
+
+def _success_payload() -> dict[str, Any]:
+    return {
+        "outcome": "success",
+        "price_paid_eur": "40.00",
+        "receipt_id": "EB-9988-7766",
+        "screenshot_url": "/app/data/screenshots/EB-9988-7766.png",
+    }
 
 
 def _wallapop_listing(**overrides: Any) -> Listing:
@@ -383,6 +375,156 @@ async def test_success_outcome_without_screenshot_falls_back_to_screenshot_missi
 # ─────────────────────────────────────────────────────────────────────────
 # Cross-flow marketplace guard
 # ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_runaway_agent_is_cancelled_at_the_step_budget() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 150
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert result.ctx["max_steps"] == DEFAULT_MAX_STEPS == 60
+    assert result.ctx["run_id"] == "run-buy-abc"
+    assert result.ctx["detail"] == "step budget exceeded; run cancelled"
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
+    assert client.agent.progress_emitted == DEFAULT_MAX_STEPS + 1
+
+
+async def test_run_at_exactly_the_step_budget_completes() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = DEFAULT_MAX_STEPS
+    flow = EbayCheckoutFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_ebay_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuySuccess)
+    assert client.cancelled == []
+
+
+async def test_wall_clock_timeout_cancels_the_remote_run() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 1
+    client.agent.hang = True
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=1)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
+
+
+async def test_failed_cancel_still_returns_the_budget_failure() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 150
+
+    attempted: list[str] = []
+
+    async def _cancel_boom(method: str, path: str, **kwargs: Any) -> httpx.Response:
+        attempted.append(path)
+        raise SDKError("cancel endpoint down")
+
+    client._request = _cancel_boom  # type: ignore[method-assign]
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert attempted == ["/v1/runs/run-buy-abc/cancel"]
+    assert result.ctx["max_steps"] == DEFAULT_MAX_STEPS
+    assert result.ctx["detail"] == "step budget exceeded; cancellation not confirmed"
+
+
+async def test_cancel_answered_with_a_terminal_status_is_not_reported_as_cancelled() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 150
+    client.cancel_status = "COMPLETED"
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.ctx["detail"] == "step budget exceeded; cancellation not confirmed"
+
+
+async def test_stream_without_complete_event_is_marketplace_error() -> None:
+    client = _FakeClient()
+
+    async def _truncated() -> AsyncIterator[Any]:
+        yield StartedEvent(type=EventType.STARTED, runId="run-cut", timestamp=_FIXED_TS)
+
+    client.agent._events = _truncated  # type: ignore[method-assign]
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.marketplace_error
+    assert client.cancelled == ["/v1/runs/run-cut/cancel"], "an orphaned run must be cancelled"
+
+
+async def test_mid_stream_sdk_error_cancels_the_orphaned_run() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.next_exception = SDKError("connection reset")
+    client.agent.fail_mid_stream = True
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.marketplace_error
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
+
+
+async def test_complete_survives_a_teardown_that_crosses_the_deadline() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.hang_on_close = True
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=1)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuySuccess), "a reported purchase must never turn into a timeout"
+    assert client.cancelled == []
+
+
+async def test_exhausted_budget_never_starts_a_run() -> None:
+    client = _FakeClient()
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert client.agent.calls == []
+
+
+async def test_caller_cancellation_cancels_the_remote_run() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 1
+    client.agent.hang = True
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    task = asyncio.create_task(flow.execute_buy(_wallapop_listing(), _MAX_PRICE))
+    while client.agent.progress_emitted == 0:
+        await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
 
 
 async def test_wallapop_flow_refuses_ebay_listing_without_calling_tinyfish() -> None:
