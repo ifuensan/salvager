@@ -24,6 +24,7 @@ from tinyfish import AsyncTinyFish
 
 from salvager.adapters.tinyfish_browser._runtime import (
     DEFAULT_MAX_DURATION_S,
+    DEFAULT_MAX_STEPS,
     build_client,
     execute_buy_via_tinyfish,
     render_buy_goal,
@@ -87,6 +88,7 @@ class WallapopPayFlow(BrowserSession):
         *,
         client: AsyncTinyFish | None = None,
         max_duration_s: int = DEFAULT_MAX_DURATION_S,
+        max_steps: int = DEFAULT_MAX_STEPS,
     ) -> None:
         """Build the flow.
 
@@ -100,6 +102,7 @@ class WallapopPayFlow(BrowserSession):
             client = build_client(api_key)
         self._client = client
         self._max_duration_s = max_duration_s
+        self._max_steps = max_steps
         self._log = get_logger("adapter.tinyfish_browser.wallapop_pay")
 
     async def close(self) -> None:
@@ -126,6 +129,7 @@ class WallapopPayFlow(BrowserSession):
             url=str(listing.url),
             payment_method="wallapop_pay",
             max_duration_s=self._max_duration_s,
+            max_steps=self._max_steps,
             log=self._log,
         )
 

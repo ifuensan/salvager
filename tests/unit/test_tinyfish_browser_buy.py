@@ -1,7 +1,7 @@
 """Tests for the Phase 2 buy flows — Story 5.3.
 
 The TinyFish SDK is mocked at the constructor seam: a fake async
-client records every ``agent.run`` call and returns a preloaded
+client records every ``agent.stream`` call and returns a preloaded
 :class:`AgentRunResponse` (or raises a preloaded exception). No
 network, no real API key.
 
@@ -20,6 +20,9 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -30,16 +33,21 @@ from pydantic import SecretStr
 from tinyfish import (
     AgentRunResponse,
     AuthenticationError,
+    CompleteEvent,
+    EventType,
     PermissionDeniedError,
+    ProgressEvent,
     RateLimitError,
     RunStatus,
     SDKError,
+    StartedEvent,
 )
 
 from salvager.adapters.tinyfish_browser import (
     EbayCheckoutFlow,
     WallapopPayFlow,
 )
+from salvager.adapters.tinyfish_browser._runtime import DEFAULT_MAX_STEPS
 from salvager.domain.errors import BuyFailureReason
 from salvager.domain.listing import Listing
 from salvager.interfaces.browser_session import (
@@ -66,23 +74,53 @@ def _fake_http_response(status_code: int) -> httpx.Response:
 
 
 class _FakeAgent:
+    """Streams STARTED, ``steps`` PROGRESS events, then COMPLETE built from
+    ``next_response`` — or raises ``next_exception``, or hangs forever."""
+
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.next_response: AgentRunResponse | None = None
         self.next_exception: BaseException | None = None
+        self.steps = 9
+        self.hang = False
+        self.progress_emitted = 0
 
-    async def run(self, *, goal: str, url: str, **kwargs: Any) -> AgentRunResponse:
+    def stream(self, *, goal: str, url: str, **kwargs: Any) -> Any:
         self.calls.append({"goal": goal, "url": url, **kwargs})
+        return contextlib.aclosing(self._events())
+
+    async def _events(self) -> AsyncIterator[Any]:
         if self.next_exception is not None:
             raise self.next_exception
+        run_id = (self.next_response.run_id if self.next_response else None) or "run-hung"
+        yield StartedEvent(type=EventType.STARTED, runId=run_id, timestamp=_FIXED_TS)
+        for i in range(self.steps):
+            self.progress_emitted += 1
+            yield ProgressEvent(
+                type=EventType.PROGRESS, runId=run_id, purpose=f"step {i}", timestamp=_FIXED_TS
+            )
+        if self.hang:
+            await asyncio.Event().wait()
         assert self.next_response is not None, "test forgot to preload a response"
-        return self.next_response
+        yield CompleteEvent(
+            type=EventType.COMPLETE,
+            runId=run_id,
+            status=self.next_response.status,
+            timestamp=_FIXED_TS,
+            result=self.next_response.result,
+            error=self.next_response.error,
+        )
 
 
 class _FakeClient:
     def __init__(self) -> None:
         self.agent = _FakeAgent()
         self.closed = False
+        self.cancelled: list[str] = []
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> None:
+        assert method == "POST"
+        self.cancelled.append(path)
 
     async def close(self) -> None:
         self.closed = True
@@ -104,6 +142,15 @@ def _make_response(
         started_at=_FIXED_TS,
         finished_at=_FIXED_TS,
     )
+
+
+def _success_payload() -> dict[str, Any]:
+    return {
+        "outcome": "success",
+        "price_paid_eur": "40.00",
+        "receipt_id": "EB-9988-7766",
+        "screenshot_url": "/app/data/screenshots/EB-9988-7766.png",
+    }
 
 
 def _wallapop_listing(**overrides: Any) -> Listing:
@@ -383,6 +430,80 @@ async def test_success_outcome_without_screenshot_falls_back_to_screenshot_missi
 # ─────────────────────────────────────────────────────────────────────────
 # Cross-flow marketplace guard
 # ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_runaway_agent_is_cancelled_at_the_step_budget() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 150
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert result.ctx["max_steps"] == DEFAULT_MAX_STEPS == 60
+    assert result.ctx["run_id"] == "run-buy-abc"
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
+    assert client.agent.progress_emitted == DEFAULT_MAX_STEPS + 1
+
+
+async def test_run_at_exactly_the_step_budget_completes() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = DEFAULT_MAX_STEPS
+    flow = EbayCheckoutFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_ebay_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuySuccess)
+    assert client.cancelled == []
+
+
+async def test_wall_clock_timeout_cancels_the_remote_run() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 1
+    client.agent.hang = True
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
+
+
+async def test_failed_cancel_still_returns_the_budget_failure() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 150
+
+    async def _cancel_boom(method: str, path: str, **kwargs: Any) -> None:
+        raise SDKError("cancel endpoint down")
+
+    client._request = _cancel_boom  # type: ignore[method-assign]
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+
+
+async def test_stream_without_complete_event_is_marketplace_error() -> None:
+    client = _FakeClient()
+
+    async def _truncated() -> AsyncIterator[Any]:
+        yield StartedEvent(type=EventType.STARTED, runId="run-cut", timestamp=_FIXED_TS)
+
+    client.agent._events = _truncated  # type: ignore[method-assign]
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.marketplace_error
 
 
 async def test_wallapop_flow_refuses_ebay_listing_without_calling_tinyfish() -> None:

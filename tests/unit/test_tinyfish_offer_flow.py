@@ -1,7 +1,7 @@
 """Tests for the Wallapop offer flow (wallapop-offer-flow).
 
 Same seam as the buy-flow tests: a fake async TinyFish client records
-every ``agent.run`` call and returns a preloaded response (or raises a
+every ``agent.stream`` call and returns a preloaded response (or raises a
 preloaded exception). Coverage: happy path (with and without a
 screenshot), every agent-reported failure outcome, SDK errors, echoed-
 amount mismatch, malformed payload, wrong-marketplace guard, and the
@@ -10,6 +10,9 @@ goal contract's structural clauses.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -17,10 +20,20 @@ from typing import Any
 import httpx
 import pytest
 from pydantic import SecretStr
-from tinyfish import AgentRunResponse, RateLimitError, RunStatus, SDKError
+from tinyfish import (
+    AgentRunResponse,
+    CompleteEvent,
+    EventType,
+    ProgressEvent,
+    RateLimitError,
+    RunStatus,
+    SDKError,
+    StartedEvent,
+)
 
 from salvager.adapters.tinyfish_browser import WallapopOfferFlow
 from salvager.adapters.tinyfish_browser.wallapop_offer import (
+    DEFAULT_MAX_OFFER_STEPS,
     OFFER_OUTPUT_CONTRACT,
     render_offer_goal,
 )
@@ -34,23 +47,53 @@ _AMOUNT = Decimal("70")
 
 
 class _FakeAgent:
+    """Streams STARTED, ``steps`` PROGRESS events, then COMPLETE built from
+    ``next_response`` — or raises ``next_exception``, or hangs forever."""
+
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.next_response: AgentRunResponse | None = None
         self.next_exception: BaseException | None = None
+        self.steps = 9
+        self.hang = False
+        self.progress_emitted = 0
 
-    async def run(self, *, goal: str, url: str, **kwargs: Any) -> AgentRunResponse:
+    def stream(self, *, goal: str, url: str, **kwargs: Any) -> Any:
         self.calls.append({"goal": goal, "url": url, **kwargs})
+        return contextlib.aclosing(self._events())
+
+    async def _events(self) -> AsyncIterator[Any]:
         if self.next_exception is not None:
             raise self.next_exception
+        run_id = (self.next_response.run_id if self.next_response else None) or "run-hung"
+        yield StartedEvent(type=EventType.STARTED, runId=run_id, timestamp=_FIXED_TS)
+        for i in range(self.steps):
+            self.progress_emitted += 1
+            yield ProgressEvent(
+                type=EventType.PROGRESS, runId=run_id, purpose=f"step {i}", timestamp=_FIXED_TS
+            )
+        if self.hang:
+            await asyncio.Event().wait()
         assert self.next_response is not None, "test forgot to preload a response"
-        return self.next_response
+        yield CompleteEvent(
+            type=EventType.COMPLETE,
+            runId=run_id,
+            status=self.next_response.status,
+            timestamp=_FIXED_TS,
+            result=self.next_response.result,
+            error=self.next_response.error,
+        )
 
 
 class _FakeClient:
     def __init__(self) -> None:
         self.agent = _FakeAgent()
         self.closed = False
+        self.cancelled: list[str] = []
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> None:
+        assert method == "POST"
+        self.cancelled.append(path)
 
     async def close(self) -> None:
         self.closed = True
@@ -202,6 +245,35 @@ async def test_incomplete_run_is_marketplace_error() -> None:
     result = await flow.execute_offer(_listing(), _AMOUNT)
     assert isinstance(result, OfferSendFailure)
     assert result.reason is OfferFailureReason.marketplace_error
+
+
+async def test_runaway_agent_is_cancelled_at_the_step_budget() -> None:
+    flow, client = _flow()
+    client.agent.next_response = _make_response(result={"outcome": "success", "offered_eur": "70"})
+    client.agent.steps = 500
+
+    result = await flow.execute_offer(_listing(), _AMOUNT)
+
+    assert isinstance(result, OfferSendFailure)
+    assert result.reason is OfferFailureReason.timeout
+    assert result.ctx["max_steps"] == DEFAULT_MAX_OFFER_STEPS
+    assert client.cancelled == ["/v1/runs/run-offer-abc/cancel"]
+    assert client.agent.progress_emitted == DEFAULT_MAX_OFFER_STEPS + 1, "stops consuming at once"
+
+
+async def test_wall_clock_timeout_cancels_the_remote_run() -> None:
+    client = _FakeClient()
+    flow = WallapopOfferFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+    client.agent.next_response = _make_response(result={"outcome": "success", "offered_eur": "70"})
+    client.agent.steps = 1
+    client.agent.hang = True
+
+    result = await flow.execute_offer(_listing(), _AMOUNT)
+
+    assert isinstance(result, OfferSendFailure)
+    assert result.reason is OfferFailureReason.timeout
+    assert result.ctx["budget_s"] == 0
+    assert client.cancelled == ["/v1/runs/run-offer-abc/cancel"]
 
 
 async def test_wrong_marketplace_is_refused_without_agent_call() -> None:
