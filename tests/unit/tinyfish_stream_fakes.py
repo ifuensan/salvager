@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from tinyfish import (
     AgentRunResponse,
     CompleteEvent,
@@ -65,14 +66,22 @@ class FakeAgent:
 
 
 class FakeClient:
+    """Records every cancel POST and answers it with ``cancel_status``."""
+
     def __init__(self) -> None:
         self.agent = FakeAgent()
         self.closed = False
         self.cancelled: list[str] = []
+        self.cancel_status = "CANCELLED"
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> None:
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         assert method == "POST"
         self.cancelled.append(path)
+        return httpx.Response(
+            200,
+            json={"run_id": "r", "status": self.cancel_status},
+            request=httpx.Request(method, f"https://agent.tinyfish.ai{path}"),
+        )
 
     async def close(self) -> None:
         self.closed = True

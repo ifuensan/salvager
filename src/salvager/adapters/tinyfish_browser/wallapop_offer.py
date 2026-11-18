@@ -63,7 +63,8 @@ from salvager.observability.logging import get_logger
 
 #: Step budget per offer. The form is shorter than a checkout (open,
 #: tap, type, submit, verify, capture), so it gets a tighter cap than
-#: the buy budget (``_runtime.DEFAULT_MAX_STEPS``) — at most ~0.65 USD per offer.
+#: the buy budget (``_runtime.DEFAULT_MAX_STEPS``): cancellation is requested
+#: past ~0.64 USD of steps.
 DEFAULT_MAX_OFFER_STEPS: Final[int] = 40
 
 #: The structured-output contract the offer agent MUST honour.
@@ -268,7 +269,7 @@ async def _execute_offer_via_tinyfish(
                 "max_steps": exc.max_steps,
                 "run_id": exc.run_id,
                 "url": url,
-                "detail": "step budget exceeded; run cancelled",
+                "detail": exc.detail,
             },
         )
     except TimeoutError:

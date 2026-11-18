@@ -388,6 +388,7 @@ async def test_runaway_agent_is_cancelled_at_the_step_budget() -> None:
     assert result.reason is BuyFailureReason.timeout
     assert result.ctx["max_steps"] == DEFAULT_MAX_STEPS == 60
     assert result.ctx["run_id"] == "run-buy-abc"
+    assert result.ctx["detail"] == "step budget exceeded; run cancelled"
     assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
     assert client.agent.progress_emitted == DEFAULT_MAX_STEPS + 1
 
@@ -423,7 +424,10 @@ async def test_failed_cancel_still_returns_the_budget_failure() -> None:
     client.agent.next_response = _make_response(result=_success_payload())
     client.agent.steps = 150
 
-    async def _cancel_boom(method: str, path: str, **kwargs: Any) -> None:
+    attempted: list[str] = []
+
+    async def _cancel_boom(method: str, path: str, **kwargs: Any) -> httpx.Response:
+        attempted.append(path)
         raise SDKError("cancel endpoint down")
 
     client._request = _cancel_boom  # type: ignore[method-assign]
@@ -433,6 +437,22 @@ async def test_failed_cancel_still_returns_the_budget_failure() -> None:
 
     assert isinstance(result, BuyFailure)
     assert result.reason is BuyFailureReason.timeout
+    assert attempted == ["/v1/runs/run-buy-abc/cancel"]
+    assert result.ctx["max_steps"] == DEFAULT_MAX_STEPS
+    assert result.ctx["detail"] == "step budget exceeded; cancellation not confirmed"
+
+
+async def test_cancel_answered_with_a_terminal_status_is_not_reported_as_cancelled() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 150
+    client.cancel_status = "COMPLETED"
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.ctx["detail"] == "step budget exceeded; cancellation not confirmed"
 
 
 async def test_stream_without_complete_event_is_marketplace_error() -> None:
@@ -448,6 +468,7 @@ async def test_stream_without_complete_event_is_marketplace_error() -> None:
 
     assert isinstance(result, BuyFailure)
     assert result.reason is BuyFailureReason.marketplace_error
+    assert client.cancelled == ["/v1/runs/run-cut/cancel"], "an orphaned run must be cancelled"
 
 
 async def test_wallapop_flow_refuses_ebay_listing_without_calling_tinyfish() -> None:
