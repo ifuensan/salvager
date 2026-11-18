@@ -28,7 +28,9 @@ _EVENT_TS = datetime(2026, 7, 22, 12, 0, 0, tzinfo=UTC)
 
 class FakeAgent:
     """Streams STARTED, ``steps`` PROGRESS events, then COMPLETE built from
-    ``next_response`` — or raises ``next_exception``, or hangs forever."""
+    ``next_response`` — or raises ``next_exception`` (before STARTED, or
+    after it with ``fail_mid_stream``), or hangs forever (``hang``, or
+    only while being closed with ``hang_on_close``)."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -36,6 +38,8 @@ class FakeAgent:
         self.next_exception: BaseException | None = None
         self.steps = 9
         self.hang = False
+        self.hang_on_close = False
+        self.fail_mid_stream = False
         self.progress_emitted = 0
 
     def stream(self, *, goal: str, url: str, **kwargs: Any) -> Any:
@@ -43,10 +47,20 @@ class FakeAgent:
         return contextlib.aclosing(self._events())
 
     async def _events(self) -> AsyncIterator[Any]:
-        if self.next_exception is not None:
+        try:
+            async for event in self._script():
+                yield event
+        finally:
+            if self.hang_on_close:
+                await asyncio.Event().wait()
+
+    async def _script(self) -> AsyncIterator[Any]:
+        if self.next_exception is not None and not self.fail_mid_stream:
             raise self.next_exception
         run_id = (self.next_response.run_id if self.next_response else None) or "run-hung"
         yield StartedEvent(type=EventType.STARTED, runId=run_id, timestamp=_EVENT_TS)
+        if self.next_exception is not None:
+            raise self.next_exception
         for i in range(self.steps):
             self.progress_emitted += 1
             yield ProgressEvent(

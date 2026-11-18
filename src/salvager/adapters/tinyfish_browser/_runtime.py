@@ -161,18 +161,22 @@ async def run_agent_bounded(
     a client-side timeout only stops *waiting*, while the remote run keeps
     stepping (and billing) up to TinyFish's 150-step default. Streaming
     exposes the run id and one ``PROGRESS`` event per step, so a run that
-    exceeds ``max_steps`` or ``max_duration_s`` — or whose stream drops
-    before ``COMPLETE`` — is cancelled server-side, exactly once and
-    outside the run's own deadline.
+    exceeds ``max_steps`` or ``max_duration_s`` — or whose stream fails or
+    drops before ``COMPLETE`` — gets one best-effort cancel attempt, made
+    outside the run's own deadline (the run may already have finished).
+    A ``COMPLETE`` received within the budget is returned even if the
+    stream teardown afterwards crosses the deadline.
 
     Raises :class:`StepBudgetExceededError`, :class:`TimeoutError` or
     :class:`SDKError` (early end of stream) after the cancel attempt;
-    TinyFish SDK errors raised by the stream propagate unchanged.
+    TinyFish SDK errors raised by the stream propagate unchanged, also
+    after a cancel attempt.
     """
     run_id: str | None = None
     steps = 0
     over_budget = False
     timed_out = False
+    completed: AgentRunResponse | None = None
     try:
         async with asyncio.timeout(max_duration_s):
             async with client.agent.stream(goal=goal, url=url) as stream:
@@ -189,7 +193,7 @@ async def run_agent_bounded(
                             "tinyfish_agent_steps",
                             extra={"run_id": event.run_id, "steps": steps},
                         )
-                        return AgentRunResponse(
+                        completed = AgentRunResponse(
                             status=event.status,
                             run_id=event.run_id,
                             result=event.result_json,
@@ -198,8 +202,16 @@ async def run_agent_bounded(
                             started_at=None,
                             finished_at=event.timestamp,
                         )
+                        break
     except TimeoutError:
         timed_out = True
+    except Exception:
+        if completed is not None:
+            return completed
+        await _cancel_run(client, run_id, log=log)
+        raise
+    if completed is not None:
+        return completed
 
     cancelled = await _cancel_run(client, run_id, log=log)
     if over_budget:
@@ -212,7 +224,7 @@ async def run_agent_bounded(
 
 
 async def _cancel_run(client: AsyncTinyFish, run_id: str | None, *, log: logging.Logger) -> bool:
-    """Best-effort ``POST /v1/runs/{id}/cancel``; never raises.
+    """One best-effort ``POST /v1/runs/{id}/cancel`` attempt; never raises.
 
     Returns True only when TinyFish reports the run ``CANCELLED`` — a run
     that reached a terminal state first answers 200 with that state. The
