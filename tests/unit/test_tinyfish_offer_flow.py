@@ -204,7 +204,7 @@ async def test_runaway_agent_is_cancelled_at_the_step_budget() -> None:
 
 async def test_wall_clock_timeout_cancels_the_remote_run() -> None:
     client = _FakeClient()
-    flow = WallapopOfferFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+    flow = WallapopOfferFlow(_FAKE_KEY, client=client, max_duration_s=1)  # type: ignore[arg-type]
     client.agent.next_response = _make_response(result={"outcome": "success", "offered_eur": "70"})
     client.agent.steps = 1
     client.agent.hang = True
@@ -213,7 +213,7 @@ async def test_wall_clock_timeout_cancels_the_remote_run() -> None:
 
     assert isinstance(result, OfferSendFailure)
     assert result.reason is OfferFailureReason.timeout
-    assert result.ctx["budget_s"] == 0
+    assert result.ctx["budget_s"] == 1
     assert client.cancelled == ["/v1/runs/run-offer-abc/cancel"]
 
 

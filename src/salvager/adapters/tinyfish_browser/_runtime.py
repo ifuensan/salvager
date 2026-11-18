@@ -177,6 +177,8 @@ async def run_agent_bounded(
     over_budget = False
     timed_out = False
     completed: AgentRunResponse | None = None
+    if max_duration_s <= 0:
+        raise TimeoutError  # an exhausted budget never starts a run
     try:
         async with asyncio.timeout(max_duration_s):
             async with client.agent.stream(goal=goal, url=url) as stream:
@@ -205,6 +207,11 @@ async def run_agent_bounded(
                         break
     except TimeoutError:
         timed_out = True
+    except asyncio.CancelledError:
+        # Caller shutdown (e.g. daemon stop mid-buy): don't orphan the run.
+        if completed is None:
+            await _cancel_run(client, run_id, log=log)
+        raise
     except Exception:
         if completed is not None:
             return completed

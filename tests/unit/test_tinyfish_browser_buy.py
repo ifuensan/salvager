@@ -20,6 +20,7 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -410,7 +411,7 @@ async def test_wall_clock_timeout_cancels_the_remote_run() -> None:
     client.agent.next_response = _make_response(result=_success_payload())
     client.agent.steps = 1
     client.agent.hang = True
-    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=1)  # type: ignore[arg-type]
 
     result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
 
@@ -489,12 +490,41 @@ async def test_complete_survives_a_teardown_that_crosses_the_deadline() -> None:
     client = _FakeClient()
     client.agent.next_response = _make_response(result=_success_payload())
     client.agent.hang_on_close = True
-    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=1)  # type: ignore[arg-type]
 
     result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
 
     assert isinstance(result, BuySuccess), "a reported purchase must never turn into a timeout"
     assert client.cancelled == []
+
+
+async def test_exhausted_budget_never_starts_a_run() -> None:
+    client = _FakeClient()
+    flow = WallapopPayFlow(_FAKE_KEY, client=client, max_duration_s=0)  # type: ignore[arg-type]
+
+    result = await flow.execute_buy(_wallapop_listing(), _MAX_PRICE)
+
+    assert isinstance(result, BuyFailure)
+    assert result.reason is BuyFailureReason.timeout
+    assert client.agent.calls == []
+
+
+async def test_caller_cancellation_cancels_the_remote_run() -> None:
+    client = _FakeClient()
+    client.agent.next_response = _make_response(result=_success_payload())
+    client.agent.steps = 1
+    client.agent.hang = True
+    flow = WallapopPayFlow(_FAKE_KEY, client=client)  # type: ignore[arg-type]
+
+    task = asyncio.create_task(flow.execute_buy(_wallapop_listing(), _MAX_PRICE))
+    while client.agent.progress_emitted == 0:
+        await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert client.cancelled == ["/v1/runs/run-buy-abc/cancel"]
 
 
 async def test_wallapop_flow_refuses_ebay_listing_without_calling_tinyfish() -> None:
