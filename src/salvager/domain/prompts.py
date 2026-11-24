@@ -36,7 +36,7 @@ from salvager.domain.wishlist import WishlistEntry
 #: forcing a fresh LLM call with the new prompt. The constant lives
 #: here (next to the prompt body) so a PR that changes the prompt and
 #: forgets to bump this is caught in code review.
-PROMPT_VERSION: Final[str] = "v1"
+PROMPT_VERSION: Final[str] = "v2"
 
 
 FORBIDDEN_PROMPT_TERMS: Final[frozenset[str]] = frozenset(
@@ -56,7 +56,8 @@ FORBIDDEN_PROMPT_TERMS: Final[frozenset[str]] = frozenset(
 )
 
 _OUTPUT_SCHEMA = {
-    "confidence": "low | medium | high",
+    "is_match": "boolean — true only if the listing IS the wishlisted part (or a container of it)",
+    "confidence": "low | medium | high — how certain you are of is_match",
     "one_line_take": "string, <= 120 chars, specific to this listing",
     "is_container": "boolean — true if the listing is a wrapper containing the wishlisted part",
     "wrapper_text": "string or null — the quoted phrase identifying the wrapper",
@@ -89,7 +90,10 @@ def build_evaluation_prompt(listing: Listing, entry: WishlistEntry) -> str:
         "Does this listing match this wishlist entry?\n"
         "\n"
         "Rules:\n"
-        "- Confidence reflects how certain you are about the match decision.\n"
+        "- is_match is your verdict. Set it false whenever the listing is a different\n"
+        "  part, however similar (other capacity, speed, form factor, model).\n"
+        "- Confidence reflects how certain you are of that verdict: a clear mismatch\n"
+        "  is is_match=false with confidence high.\n"
         "- If the listing wraps the part (e.g. a NAS that includes the wishlisted drive),\n"
         "  set is_container=true and quote the wrapper phrase in wrapper_text.\n"
         "- extracted_text quotes the listing language that identifies the part itself.\n"

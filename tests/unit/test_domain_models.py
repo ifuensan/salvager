@@ -134,6 +134,35 @@ def test_listing_evaluation_confidence_literal_enforced() -> None:
         _valid_evaluation(confidence="very-high")
 
 
+def test_listing_evaluation_defaults_to_a_match() -> None:
+    """Evaluations persisted before ``is_match`` existed were all alerted
+    matches, so a payload without the field must still load as one."""
+    assert _valid_evaluation().is_match is True
+
+
+@pytest.mark.parametrize(
+    ("confidence", "threshold", "expected"),
+    [
+        ("high", "high", True),
+        ("medium", "high", False),
+        ("medium", "medium", True),
+        ("low", "low", True),
+    ],
+)
+def test_listing_evaluation_clears_threshold_by_rank(
+    confidence: str, threshold: str, expected: bool
+) -> None:
+    assert _valid_evaluation(confidence=confidence).clears(threshold) is expected
+
+
+@pytest.mark.parametrize("threshold", ["low", "medium", "high"])
+def test_confident_mismatch_never_clears_any_threshold(threshold: str) -> None:
+    """``confidence`` is certainty in the verdict: a sure "not this part"
+    must not alert, even under the loosest threshold."""
+    evaluation = _valid_evaluation(is_match=False, confidence="high")
+    assert evaluation.clears(threshold) is False
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # InlineButton + RenderedAlert
 # ─────────────────────────────────────────────────────────────────────────

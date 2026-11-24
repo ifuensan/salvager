@@ -109,10 +109,12 @@ def _evaluation(
     *,
     confidence: str = "high",
     is_container: bool = False,
+    is_match: bool = True,
 ) -> ListingEvaluation:
     return ListingEvaluation(
         listing_id=listing_id,
         entry_key=("Western Digital", "WD Red Plus 4TB", "WD40EFPX"),
+        is_match=is_match,
         confidence=confidence,  # type: ignore[arg-type]
         one_line_take="Strong match.",
         is_container=is_container,
@@ -396,6 +398,35 @@ async def test_below_threshold_listing_marked_seen_and_logged_dropped(
     records = _records(out)
     dropped = [r for r in records if r["event"] == "listing_dropped_below_threshold"]
     assert dropped and dropped[0]["confidence"] == "medium"
+
+
+async def test_confident_mismatch_never_alerts_even_under_low_threshold(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``is_match=False`` with HIGH confidence is a sure "not this part" —
+    it is dropped under any threshold and logged as such, not as a
+    below-threshold match (SO-DIMM listings alerted a UDIMM entry)."""
+    entry = _entry(confidence_threshold="low")
+    fetcher = _FakeFetcher(response=[_listing("so1")])
+    evaluator = _FakeEvaluator(
+        per_listing_response={"so1": _evaluation("so1", confidence="high", is_match=False)}
+    )
+    store = _FakeStore()
+    telegram = _FakeTelegram()
+
+    summary = await run_poll_cycle(
+        "wallapop",
+        wishlist=_wishlist(entry),
+        **_make_kwargs(fetcher=fetcher, evaluator=evaluator, store=store, telegram=telegram),
+    )
+
+    assert summary.alerts_sent == 0
+    assert summary.dropped_count == 1
+    assert telegram.sends == []
+    assert ("so1", entry.entry_key) in store.seen
+    events = [r["event"] for r in _records(capsys.readouterr().out)]
+    assert "listing_dropped_not_a_match" in events
+    assert "listing_dropped_below_threshold" not in events
 
 
 async def test_reserved_listings_skip_eval_record_seen_and_emit_comp_log(

@@ -84,10 +84,11 @@ def _listing(
     )
 
 
-def _evaluation(confidence: str = "high") -> ListingEvaluation:
+def _evaluation(confidence: str = "high", *, is_match: bool = True) -> ListingEvaluation:
     return ListingEvaluation(
         listing_id="abc123",
         entry_key=("Western Digital", "WD Red Plus 4TB", "WD40EFPX"),
+        is_match=is_match,
         confidence=confidence,  # type: ignore[arg-type]
         one_line_take="Strong match.",
         is_container=False,
@@ -192,6 +193,16 @@ async def test_eu_country_gate_outcome_unchanged() -> None:
 async def test_confidence_below_threshold_is_ineligible() -> None:
     # entry threshold is medium; an explicit low evaluation must fail.
     result = await _preflight(_state()).check(_entry(), _listing(), _evaluation(confidence="low"))
+    assert result.reason == "confidence_below_threshold"
+
+
+async def test_confident_mismatch_is_ineligible() -> None:
+    """Defense in depth behind the poll loop: a sure "not this part" can
+    never reach the buy path, however high its confidence."""
+    result = await _preflight(_state()).check(
+        _entry(), _listing(), _evaluation(confidence="high", is_match=False)
+    )
+    assert result.eligible is False
     assert result.reason == "confidence_below_threshold"
 
 

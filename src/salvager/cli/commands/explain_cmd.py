@@ -21,7 +21,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -50,9 +50,6 @@ from salvager.orchestration.composer import (
     WALLAPOP_COOKIES_RELPATH,
     build_inner_evaluator,
 )
-
-#: Confidence ordering — mirrors the poll loop's threshold gate.
-_CONFIDENCE_RANK: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
 
 #: Exit code for a fetch failure (malformed URL, 404, adapter error).
 _FETCH_FAILURE_EXIT = 3
@@ -179,7 +176,7 @@ async def _evaluate(
     evaluation = await evaluator.evaluate(listing, entry)
     prompt = build_evaluation_prompt(listing, entry)
     threshold = entry.confidence_threshold
-    would_alert = _CONFIDENCE_RANK[evaluation.confidence] >= _CONFIDENCE_RANK[threshold]
+    would_alert = evaluation.clears(threshold)
 
     alert_text: str | None = None
     reason_for_skip: str | None = None
@@ -194,6 +191,8 @@ async def _evaluate(
             rendered_at=datetime.now(UTC),
         )
         alert_text = render_phase1_listing_alert(snapshot).text
+    elif not evaluation.is_match:
+        reason_for_skip = "the model judged the listing not to be this part"
     else:
         reason_for_skip = (
             f"confidence {evaluation.confidence!r} is below the entry threshold {threshold!r}"
