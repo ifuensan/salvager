@@ -106,6 +106,7 @@ def test_prompt_asks_single_matching_question() -> None:
 def test_prompt_requires_output_schema() -> None:
     prompt = build_evaluation_prompt(_listing(), _entry())
     for required_field in (
+        "is_match",
         "confidence",
         "one_line_take",
         "is_container",
@@ -139,6 +140,7 @@ def test_prompt_handles_missing_in_device_ceiling() -> None:
 def _valid_response() -> str:
     return json.dumps(
         {
+            "is_match": True,
             "confidence": "high",
             "one_line_take": "WD Red Plus 4TB at €55 in Madrid — strong match.",
             "is_container": False,
@@ -168,6 +170,7 @@ async def test_successful_evaluation_returns_typed_result() -> None:
 async def test_container_detection_result_round_trips() -> None:
     container_response = json.dumps(
         {
+            "is_match": True,
             "confidence": "medium",
             "one_line_take": "Synology DS220+ NAS *with* 2x WD Red Plus 4TB drives.",
             "is_container": True,
@@ -291,12 +294,42 @@ async def test_invalid_confidence_value_raises_llm_evaluation_error() -> None:
     """Non-conforming response — confidence='very-high' isn't in the literal."""
     bad = json.dumps(
         {
+            "is_match": True,
             "confidence": "very-high",  # invalid
             "one_line_take": "x",
             "is_container": False,
         }
     )
     evaluator = GeminiFlashEvaluator(SecretStr("test-key"), call=_make_callable(bad))
+    with pytest.raises(LlmEvaluationError):
+        await evaluator.evaluate(_listing(), _entry())
+
+
+@pytest.mark.asyncio
+async def test_confident_mismatch_round_trips_as_not_a_match() -> None:
+    """A clear mismatch is ``is_match=False`` with HIGH confidence — the
+    confidence describes the verdict, so it must not be read as a match
+    (the SO-DIMM listings that alerted a desktop-RAM entry, 2026-11)."""
+    mismatch = json.dumps(
+        {
+            "is_match": False,
+            "confidence": "high",
+            "one_line_take": "SO-DIMM laptop module; the entry wants a 288-pin desktop UDIMM.",
+            "is_container": False,
+        }
+    )
+    evaluator = GeminiFlashEvaluator(SecretStr("test-key"), call=_make_callable(mismatch))
+    evaluation = await evaluator.evaluate(_listing(), _entry())
+    assert evaluation.is_match is False
+    assert evaluation.confidence == "high"
+    assert not evaluation.clears("low")
+
+
+@pytest.mark.asyncio
+async def test_reply_without_verdict_raises_llm_evaluation_error() -> None:
+    """No ``is_match`` → malformed, never a default match (fail closed)."""
+    no_verdict = json.dumps({"confidence": "high", "one_line_take": "x", "is_container": False})
+    evaluator = GeminiFlashEvaluator(SecretStr("test-key"), call=_make_callable(no_verdict))
     with pytest.raises(LlmEvaluationError):
         await evaluator.evaluate(_listing(), _entry())
 
@@ -309,6 +342,7 @@ async def test_one_line_take_too_long_is_clipped_not_rejected() -> None:
     prod 2026-07). The take is clipped to 120 chars with an ellipsis."""
     long_response = json.dumps(
         {
+            "is_match": True,
             "confidence": "high",
             "one_line_take": "x" * 200,  # > 120 chars
             "is_container": False,
@@ -328,6 +362,7 @@ async def test_one_line_take_too_long_is_clipped_not_rejected() -> None:
 async def test_one_line_take_at_exactly_the_cap_is_untouched() -> None:
     response = json.dumps(
         {
+            "is_match": True,
             "confidence": "medium",
             "one_line_take": "y" * 120,
             "is_container": False,

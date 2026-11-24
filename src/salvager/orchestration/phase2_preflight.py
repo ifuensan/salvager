@@ -38,9 +38,6 @@ from salvager.interfaces.phase2_state_reader import Phase2StateReader
 #: stale; the gate fails until the next smoke run renews the signal.
 DEFAULT_SMOKE_FRESHNESS_HOURS: Final[int] = 24
 
-#: Confidence ordering: low < medium < high. Mirrors the poll loop's gate.
-_CONFIDENCE_RANK: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
-
 
 @dataclass(frozen=True)
 class Phase2EligibilityResult:
@@ -106,7 +103,7 @@ class Phase2Preflight:
             > max_price
         ):
             return Phase2EligibilityResult(False, "phase2_max_price_below_listing")
-        if _CONFIDENCE_RANK[evaluation.confidence] < _CONFIDENCE_RANK[entry.confidence_threshold]:
+        if not evaluation.clears(entry.confidence_threshold):
             return Phase2EligibilityResult(False, "confidence_below_threshold")
 
         # ── Global Phase 2 state checks (one DB read) ────────────────

@@ -83,11 +83,6 @@ from salvager.orchestration.phase2_preflight import Phase2Preflight
 #: NFR-P3: per-marketplace cycles cap concurrent LLM evaluations at 8.
 DEFAULT_MAX_CONCURRENT_EVALUATIONS: Final[int] = 8
 
-#: Confidence ordering: low < medium < high. A wishlist entry's
-#: ``confidence_threshold`` is the floor — we alert when the eval's
-#: ``confidence`` is at-or-above the threshold.
-_CONFIDENCE_RANK: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
-
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -304,7 +299,7 @@ async def run_poll_cycle(
                 # NOT mark as seen — the listing will retry next cycle.
                 continue
 
-            if _passes_threshold(evaluation, entry.confidence_threshold):
+            if evaluation.clears(entry.confidence_threshold):
                 handled = await _dispatch_alert(
                     entry=entry,
                     listing=listing,
@@ -325,7 +320,9 @@ async def run_poll_cycle(
             else:
                 summary.dropped_count += 1
                 log.info(
-                    "listing_dropped_below_threshold",
+                    "listing_dropped_below_threshold"
+                    if evaluation.is_match
+                    else "listing_dropped_not_a_match",
                     extra={
                         "marketplace": marketplace,
                         "entry_display_name": entry.display_name,
@@ -594,10 +591,6 @@ async def _evaluate_concurrently(
                 return listing, None
 
     return await asyncio.gather(*(_eval_one(listing) for listing in listings))
-
-
-def _passes_threshold(evaluation: ListingEvaluation, threshold: str) -> bool:
-    return _CONFIDENCE_RANK[evaluation.confidence] >= _CONFIDENCE_RANK[threshold]
 
 
 async def _select_phase(

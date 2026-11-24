@@ -96,6 +96,7 @@ class ClaudeHaikuEvaluator(ListingEvaluator):
         return ListingEvaluation(
             listing_id=listing.listing_id,
             entry_key=entry.entry_key,
+            is_match=parsed.is_match,
             confidence=parsed.confidence,
             one_line_take=clip_one_line_take(parsed.one_line_take),
             is_container=parsed.is_container,

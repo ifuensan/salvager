@@ -7,8 +7,27 @@ NFR-M4.
 
 ## [Unreleased]
 
-Nothing on the wire today. Post-v1 work is described in
-[ROADMAP.md](ROADMAP.md) under "Post-launch (deferred)".
+**A confident "not this part" no longer alerts**
+
+The prompt asked for a confidence in "the match decision", and the model
+read it as certainty in its *verdict*: a sure mismatch came back as
+`confidence: high`, which the threshold gate treated as a strong match.
+Since launch, at least 24 of 458 recorded alerts carry a plainly negative
+take ("wrong model", "speed mismatch", "SO-DIMM … no coincide"), and two
+SO-DIMM kits alerted a desktop-UDIMM entry with Phase 2 armed.
+
+- The model now returns an explicit `is_match` verdict, and `confidence`
+  is defined as certainty in that verdict. A reply without `is_match` is
+  malformed and fails closed (`llm_eval_failed`), never a default match.
+- `ListingEvaluation.clears(threshold)` is the single gate for the poll
+  loop, the Phase 2 pre-flight and `salvager explain`: it requires
+  `is_match` and the confidence rank. A mismatch is dropped under any
+  threshold and logged as `listing_dropped_not_a_match`; `explain` gives
+  it its own skip reason.
+- `PROMPT_VERSION` bumps to `v2`, so every cached v1 evaluation misses
+  once and is re-judged with the new prompt.
+- Evaluations stored before the field existed (alert snapshots) load
+  with `is_match = true`: each of them was an alerted match.
 
 ---
 

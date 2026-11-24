@@ -102,6 +102,7 @@ def _patch_evaluator(
     *,
     confidence: str = "high",
     cache_hit: bool = False,
+    is_match: bool = True,
 ) -> list[str]:
     """Swap the evaluator construction for a fake; return a call-log list."""
     calls: list[str] = []
@@ -112,6 +113,7 @@ def _patch_evaluator(
             return ListingEvaluation(
                 listing_id=listing.listing_id,
                 entry_key=entry.entry_key,
+                is_match=is_match,
                 confidence=confidence,  # type: ignore[arg-type]
                 one_line_take="Strong match.",
                 is_container=False,
@@ -210,6 +212,20 @@ def test_low_confidence_records_a_skip_reason(
     assert evaluation["would_alert"] is False
     assert evaluation["would_be_alert_text"] is None
     assert "below the entry threshold" in evaluation["reason_for_skip"]
+
+
+def test_confident_mismatch_records_a_not_this_part_skip_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_fetcher(monkeypatch, _FakeFetcher(_listing()))
+    _patch_evaluator(monkeypatch, confidence="high", is_match=False)
+
+    _run(tmp_path)
+    evaluation = json.loads(capsys.readouterr().out)["evaluations"][0]
+    assert evaluation["would_alert"] is False
+    assert evaluation["reason_for_skip"] == "the model judged the listing not to be this part"
 
 
 def test_cache_hit_is_noted(

@@ -22,6 +22,7 @@ class ClaudeEvalResponse(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    is_match: bool
     confidence: ConfidenceLevel
     one_line_take: str = Field(min_length=1)
     is_container: bool
